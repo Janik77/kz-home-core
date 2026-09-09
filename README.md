@@ -1,15 +1,36 @@
-# KZ Home Core
+# KZ Home Core v0.2
 
-Минимальное серверное ядро умного дома KZ Home на FastAPI. Сейчас оно работает
-полностью in-memory и не требует ни физического оборудования, ни MQTT-брокера.
+Простое серверное ядро умного дома на Python, FastAPI и Pydantic. Данные пока
+хранятся в памяти, а demo mode позволяет запускать проект без оборудования и
+MQTT-брокера.
 
-## Возможности
+## Архитектура
 
-- REST API для комнат, устройств и сцен;
-- WebSocket-события об изменениях состояния;
-- виртуальный датчик движения `motion1` (переключается каждые 5 секунд);
-- автоматизация: при обнаружении движения включается `light1`;
-- необязательный абстрактный MQTT-слой для будущего подключения ESP32.
+```text
+App
+ ↓
+FastAPI
+ ↓
+KZ Home Core
+ ↓
+DeviceService
+ ↓
+Transport
+ ↓
+Virtual / MQTT / BLE Mesh / Zigbee / Matter
+```
+
+- `app/services/` содержит бизнес-логику устройств, сцен, структуры дома и
+  автоматизаций;
+- `app/events/` — внутренний in-memory EventBus;
+- `app/transports/` — независимые от бизнес-логики интерфейсы транспортов;
+- `simulator/` — детерминированные виртуальные датчики для demo mode;
+- `app/demo_data.py` — один дом, два этажа, четыре комнаты, пять устройств, две
+  сцены и одна автоматизация.
+
+Поддержка MQTT является необязательной. Реальных BLE Mesh, Zigbee и Matter
+интеграций пока нет: metadata устройства только сохраняет будущий протокол, а
+demo-устройства используют `{"protocol": "virtual"}`.
 
 ## Запуск
 
@@ -20,38 +41,54 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-Откройте документацию API в браузере:
+Swagger UI доступен по адресу:
 
 http://127.0.0.1:8000/docs
 
-Интервал виртуального датчика можно изменить переменной окружения, например:
+Проверка состояния ядра:
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+## Virtual devices
+
+После запуска simulator последовательно и без случайных скачков меняет движение
+в коридоре, температуру в спальне и состояние датчика протечки. По умолчанию
+один шаг выполняется каждые 5 секунд. Интервал можно изменить:
 
 ```bash
 KZHOME_SIMULATOR_INTERVAL=2 uvicorn app.main:app --reload
 ```
 
-## Основные endpoints
+При `hall_motion.motion = true` automation `hall_motion_light` включает
+`living_room_light`. Состояние можно изменить вручную:
 
-- `GET /health`
-- `GET /devices`, `GET /devices/{device_id}`
-- `POST /devices/{device_id}/on`, `POST /devices/{device_id}/off`
-- `GET /rooms`
-- `GET /scenes`, `POST /scenes/{scene_id}/run`
-- `WS /ws`
-
-Пример WebSocket-события:
-
-```json
-{"type": "device_state_changed", "device_id": "light1", "state": "on"}
+```bash
+curl -X PATCH http://127.0.0.1:8000/devices/living_room_light/state \
+  -H 'Content-Type: application/json' \
+  -d '{"on": true, "brightness": 50}'
 ```
 
-## MQTT
+Старые shortcuts также работают:
 
-`app/mqtt.py` задаёт интерфейс транспорта и no-op реализацию. Поэтому MQTT не
-нужен для запуска MVP. Будущие устройства смогут использовать темы:
+```bash
+curl -X POST http://127.0.0.1:8000/devices/living_room_light/on
+curl -X POST http://127.0.0.1:8000/devices/living_room_light/off
+```
 
-- состояние: `kzhome/home1/livingroom/light1/state`;
-- команда: `kzhome/home1/livingroom/light1/set`.
+WebSocket endpoint `/ws` отправляет события EventBus, в том числе
+`device_state_changed`, `scene_started` и `automation_triggered`.
+
+## MQTT abstraction
+
+`MQTTTransport` не зависит от `paho-mqtt` и использует темы:
+
+- `kzhome/{house_id}/{device_id}/state`;
+- `kzhome/{house_id}/{device_id}/set`.
+
+Без переданного MQTT-клиента используется no-op клиент, поэтому брокер для
+запуска не нужен.
 
 ## Тесты
 

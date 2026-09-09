@@ -1,26 +1,53 @@
-from typing import Literal, TypeAlias
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+DeviceType = Literal[
+    "light",
+    "relay",
+    "switch",
+    "motion_sensor",
+    "temperature_sensor",
+    "humidity_sensor",
+    "leak_sensor",
+    "curtain",
+    "thermostat",
+    "socket",
+]
+DeviceState = dict[str, Any]
 
-DeviceState: TypeAlias = str | bool
+
+class House(BaseModel):
+    id: str
+    name: str
+
+
+class Floor(BaseModel):
+    id: str
+    house_id: str
+    name: str
+    order: int
+
+
+class Room(BaseModel):
+    id: str
+    floor_id: str
+    name: str
+    icon: str | None = None
 
 
 class Device(BaseModel):
     id: str
     name: str
     room_id: str
-    type: Literal["light", "relay", "motion_sensor"]
-    state: DeviceState
+    type: DeviceType
+    state: DeviceState = Field(default_factory=dict)
     online: bool = True
+    capabilities: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class Room(BaseModel):
-    id: str
-    name: str
-
-
-class SceneAction(BaseModel):
+class DeviceAction(BaseModel):
     device_id: str
     state: DeviceState
 
@@ -28,10 +55,26 @@ class SceneAction(BaseModel):
 class Scene(BaseModel):
     id: str
     name: str
-    actions: list[SceneAction] = Field(default_factory=list)
+    house_id: str
+    actions: list[DeviceAction] = Field(default_factory=list)
 
 
-class DeviceStateChanged(BaseModel):
-    type: str = "device_state_changed"
+class AutomationTrigger(BaseModel):
     device_id: str
-    state: DeviceState
+    field: str
+    equals: Any
+
+
+class AutomationCondition(BaseModel):
+    device_id: str
+    field: str
+    equals: Any
+
+
+class Automation(BaseModel):
+    id: str
+    name: str
+    enabled: bool = True
+    trigger: AutomationTrigger
+    conditions: list[AutomationCondition] = Field(default_factory=list)
+    actions: list[DeviceAction] = Field(default_factory=list)

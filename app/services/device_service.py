@@ -1,25 +1,21 @@
 import asyncio
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Iterable
 
-from app.models import Device, DeviceState, DeviceStateChanged
-
-EventHandler = Callable[[DeviceStateChanged], Awaitable[None]]
+from app.events import Event, EventBus
+from app.models import Device, DeviceState
 
 
 class DeviceNotFoundError(KeyError):
-    """Raised when a device id is unknown."""
+    pass
 
 
 class DeviceService:
-    """Concurrency-safe, in-memory device storage and event dispatcher."""
+    """Protocol-independent in-memory device registry."""
 
-    def __init__(self, devices: Iterable[Device] = ()) -> None:
+    def __init__(self, event_bus: EventBus, devices: Iterable[Device] = ()) -> None:
+        self._event_bus = event_bus
         self._devices = {device.id: device for device in devices}
-        self._handlers: list[EventHandler] = []
         self._lock = asyncio.Lock()
-
-    def subscribe(self, handler: EventHandler) -> None:
-        self._handlers.append(handler)
 
     async def list(self) -> list[Device]:
         async with self._lock:
@@ -27,22 +23,38 @@ class DeviceService:
 
     async def get(self, device_id: str) -> Device:
         async with self._lock:
-            device = self._devices.get(device_id)
-            if device is None:
-                raise DeviceNotFoundError(device_id)
-            return device.model_copy(deep=True)
+            return self._copy_device(device_id)
 
-    async def set_state(self, device_id: str, state: DeviceState) -> Device:
+    async def update_state(self, device_id: str, patch: DeviceState) -> Device:
         async with self._lock:
-            device = self._devices.get(device_id)
-            if device is None:
-                raise DeviceNotFoundError(device_id)
-            if device.state == state:
+            device = self._find(device_id)
+            changed = {key: value for key, value in patch.items() if device.state.get(key) != value}
+            if not changed:
                 return device.model_copy(deep=True)
-            device.state = state
+            device.state.update(changed)
             result = device.model_copy(deep=True)
 
-        event = DeviceStateChanged(device_id=device_id, state=state)
-        for handler in tuple(self._handlers):
-            await handler(event)
+        await self._event_bus.publish(
+            Event(type="device_state_changed", data={"device_id": device_id, "state": changed})
+        )
         return result
+
+    async def set_online(self, device_id: str, online: bool) -> Device:
+        async with self._lock:
+            device = self._find(device_id)
+            if device.online == online:
+                return device.model_copy(deep=True)
+            device.online = online
+            result = device.model_copy(deep=True)
+        event_type = "device_online" if online else "device_offline"
+        await self._event_bus.publish(Event(type=event_type, data={"device_id": device_id}))
+        return result
+
+    def _find(self, device_id: str) -> Device:
+        device = self._devices.get(device_id)
+        if device is None:
+            raise DeviceNotFoundError(device_id)
+        return device
+
+    def _copy_device(self, device_id: str) -> Device:
+        return self._find(device_id).model_copy(deep=True)

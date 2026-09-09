@@ -4,20 +4,26 @@ from contextlib import suppress
 from app.services.device_service import DeviceService
 
 
-class VirtualMotionSensor:
-    """Alternates a virtual motion sensor between false and true."""
+class VirtualDeviceSimulator:
+    """A deterministic, slow demo cycle for virtual sensors."""
 
-    def __init__(self, devices: DeviceService, device_id: str = "motion1", interval: float = 5.0) -> None:
+    def __init__(self, devices: DeviceService, interval: float = 5.0) -> None:
         self.devices = devices
-        self.device_id = device_id
         self.interval = interval
+        self._steps = (
+            ("hall_motion", {"motion": True}),
+            ("bedroom_temperature", {"temperature": 23.0}),
+            ("hall_motion", {"motion": False}),
+            ("main_leak_sensor", {"leak": True}),
+            ("main_leak_sensor", {"leak": False}),
+            ("bedroom_temperature", {"temperature": 22.5}),
+        )
 
     async def run(self) -> None:
-        state = False
         while True:
-            await asyncio.sleep(self.interval)
-            state = not state
-            await self.devices.set_state(self.device_id, state)
+            for device_id, state in self._steps:
+                await asyncio.sleep(self.interval)
+                await self.devices.update_state(device_id, state)
 
 
 async def stop_simulator(task: asyncio.Task[None]) -> None:

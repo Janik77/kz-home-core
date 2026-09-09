@@ -1,6 +1,6 @@
 from fastapi import WebSocket
 
-from app.models import DeviceStateChanged
+from app.events import Event
 
 
 class ConnectionManager:
@@ -15,13 +15,9 @@ class ConnectionManager:
         if websocket in self._connections:
             self._connections.remove(websocket)
 
-    async def broadcast(self, event: DeviceStateChanged) -> None:
-        message = event.model_dump()
-        stale: list[WebSocket] = []
+    async def handle_event(self, event: Event) -> None:
         for connection in tuple(self._connections):
             try:
-                await connection.send_json(message)
+                await connection.send_json(event.message())
             except RuntimeError:
-                stale.append(connection)
-        for connection in stale:
-            self.disconnect(connection)
+                self.disconnect(connection)
