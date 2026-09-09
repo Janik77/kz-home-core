@@ -1,11 +1,12 @@
 import asyncio
 from contextlib import suppress
 
+from app.core.errors import EntityNotFoundError
 from app.services.device_service import DeviceService
 
 
 class VirtualDeviceSimulator:
-    """A deterministic, slow demo cycle for virtual sensors."""
+    """A deterministic, slow demo cycle for seeded virtual sensors."""
 
     def __init__(self, devices: DeviceService, interval: float = 5.0) -> None:
         self.devices = devices
@@ -23,7 +24,11 @@ class VirtualDeviceSimulator:
         while True:
             for device_id, state in self._steps:
                 await asyncio.sleep(self.interval)
-                await self.devices.update_state(device_id, state)
+                try:
+                    await self.devices.update_state(device_id, state)
+                except EntityNotFoundError:
+                    # The application also supports an intentionally empty database.
+                    continue
 
 
 async def stop_simulator(task: asyncio.Task[None]) -> None:

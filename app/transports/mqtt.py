@@ -2,7 +2,7 @@ import json
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
-from app.models import Device, DeviceState
+from app.schemas import DeviceRead, DeviceState
 
 StateHandler = Callable[[str, DeviceState], Awaitable[None]]
 
@@ -19,7 +19,12 @@ class NullMQTTClient:
 class MQTTTransport:
     """MQTT adapter; the core remains independent of any MQTT library."""
 
-    def __init__(self, house_id: str, client: MQTTClient | None = None, state_handler: StateHandler | None = None) -> None:
+    def __init__(
+        self,
+        house_id: str,
+        client: MQTTClient | None = None,
+        state_handler: StateHandler | None = None,
+    ) -> None:
         self.house_id = house_id
         self.client = client or NullMQTTClient()
         self.state_handler = state_handler
@@ -30,7 +35,7 @@ class MQTTTransport:
     def command_topic(self, device_id: str) -> str:
         return f"kzhome/{self.house_id}/{device_id}/set"
 
-    async def publish_state(self, device: Device) -> None:
+    async def publish_state(self, device: DeviceRead) -> None:
         await self.client.publish(self.state_topic(device.id), json.dumps(device.state))
 
     async def send_command(self, device_id: str, state: DeviceState) -> None:
@@ -38,7 +43,11 @@ class MQTTTransport:
 
     async def handle_message(self, topic: str, payload: str) -> None:
         prefix = f"kzhome/{self.house_id}/"
-        if self.state_handler is None or not topic.startswith(prefix) or not topic.endswith("/state"):
+        if (
+            self.state_handler is None
+            or not topic.startswith(prefix)
+            or not topic.endswith("/state")
+        ):
             return
         device_id = topic.split("/")[-2]
         state = json.loads(payload)

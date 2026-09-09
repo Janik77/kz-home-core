@@ -1,9 +1,9 @@
 from typing import Protocol
 
-from app.models import Device, DeviceState
+from app.schemas import DeviceRead, DeviceState
 
 
 class Transport(Protocol):
-    async def publish_state(self, device: Device) -> None: ...
+    async def publish_state(self, device: DeviceRead) -> None: ...
 
     async def send_command(self, device_id: str, state: DeviceState) -> None: ...
