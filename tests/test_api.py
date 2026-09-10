@@ -53,8 +53,23 @@ def seeded_client(db_settings: Settings) -> Iterator[TestClient]:
         yield test_client
 
 
-def test_health(client: TestClient) -> None:
+def test_lifespan_starts_and_stops_when_simulator_disabled(
+    client: TestClient,
+) -> None:
     assert client.get("/health").json() == {"status": "ok", "version": "0.3.0"}
+
+
+def test_enabled_simulator_does_not_block_startup(
+    db_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("KZHOME_SIMULATOR_INTERVAL", "60")
+    enabled_settings = Settings(
+        database_url=db_settings.database_url,
+        app_env="development",
+        simulator_enabled=True,
+    )
+    with TestClient(create_app(enabled_settings)) as test_client:
+        assert test_client.get("/health").status_code == 200
 
 
 def test_create_structure_device_and_duplicate_validation(client: TestClient) -> None:

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -22,10 +23,11 @@ from app.websocket import ConnectionManager
 from simulator.virtual_device import VirtualDeviceSimulator, stop_simulator
 
 VERSION = "0.3.0"
+logger = logging.getLogger(__name__)
 
 
 def create_app(
-    settings: Settings | None = None, *, run_simulator: bool = True
+    settings: Settings | None = None, *, run_simulator: bool | None = None
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     engine = create_db_engine(settings)
@@ -53,23 +55,27 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         task: asyncio.Task[None] | None = None
-        simulator_session = None
-        if run_simulator:
-            simulator_session = session_factory()
-            devices = DeviceService(
-                DeviceRepository(simulator_session),
-                RoomRepository(simulator_session),
-                event_bus,
+        simulator_requested = (
+            settings.simulator_enabled if run_simulator is None else run_simulator
+        )
+        simulator_enabled = (
+            settings.app_env.lower() != "production" and simulator_requested
+        )
+        if simulator_enabled:
+            try:
+                interval = float(os.getenv("KZHOME_SIMULATOR_INTERVAL", "5"))
+            except ValueError:
+                logger.exception("Invalid KZHOME_SIMULATOR_INTERVAL; using 5 seconds")
+                interval = 5.0
+            simulator = VirtualDeviceSimulator(session_factory, event_bus, interval)
+            task = asyncio.create_task(
+                simulator.run(), name="kzhome-virtual-device-simulator"
             )
-            interval = float(os.getenv("KZHOME_SIMULATOR_INTERVAL", "5"))
-            task = asyncio.create_task(VirtualDeviceSimulator(devices, interval).run())
         try:
             yield
         finally:
             if task is not None:
                 await stop_simulator(task)
-            if simulator_session is not None:
-                simulator_session.close()
             engine.dispose()
 
     # API responses never expose tracebacks; APP_DEBUG remains available to

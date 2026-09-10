@@ -35,6 +35,7 @@ cp .env.example .env
 export DATABASE_URL='postgresql+psycopg://kzhome:password@localhost:5432/kzhome'
 export APP_ENV=development
 export APP_DEBUG=false
+export KZHOME_SIMULATOR_ENABLED=false
 ```
 
 ## Миграции, demo data и запуск
@@ -58,9 +59,18 @@ alembic revision --autogenerate -m "describe change"
 alembic upgrade head
 ```
 
-Virtual simulator последовательно изменяет `hall_motion`,
-`bedroom_temperature` и `main_leak_sensor`. Интервал задаётся через
-`KZHOME_SIMULATOR_INTERVAL` (по умолчанию 5 секунд). События доступны на `/ws`.
+Virtual simulator по умолчанию отключён и никогда не запускается автоматически
+при `APP_ENV=production`. Для локального demo mode включите его явно:
+
+```bash
+export KZHOME_SIMULATOR_ENABLED=true
+export KZHOME_SIMULATOR_INTERVAL=5
+uvicorn app.main:app --reload
+```
+
+Simulator работает фоновой задачей и последовательно изменяет `hall_motion`,
+`bedroom_temperature` и `main_leak_sensor`. Каждый шаг открывает отдельную
+короткоживущую database session. События доступны на `/ws`.
 
 ## API
 
