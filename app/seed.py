@@ -1,5 +1,5 @@
 from app.core import Settings
-from app.db import create_session_factory
+from app.db import create_db_engine, create_session_factory
 from app.demo_data import automations, devices, floors, houses, rooms, scenes
 from app.repositories import (
     AutomationRepository,
@@ -17,15 +17,20 @@ def add_missing(repository, items) -> None:
             repository.create(item.model_dump())
 
 
-def main() -> None:
-    factory = create_session_factory(Settings.from_env())
-    with factory() as session:
-        add_missing(HouseRepository(session), houses())
-        add_missing(FloorRepository(session), floors())
-        add_missing(RoomRepository(session), rooms())
-        add_missing(DeviceRepository(session), devices())
-        add_missing(SceneRepository(session), scenes())
-        add_missing(AutomationRepository(session), automations())
+def main(settings: Settings | None = None) -> None:
+    settings = settings or Settings.from_env()
+    engine = create_db_engine(settings)
+    factory = create_session_factory(settings, engine)
+    try:
+        with factory() as session:
+            add_missing(HouseRepository(session), houses())
+            add_missing(FloorRepository(session), floors())
+            add_missing(RoomRepository(session), rooms())
+            add_missing(DeviceRepository(session), devices())
+            add_missing(SceneRepository(session), scenes())
+            add_missing(AutomationRepository(session), automations())
+    finally:
+        engine.dispose()
     print("Demo data is ready.")
 
 

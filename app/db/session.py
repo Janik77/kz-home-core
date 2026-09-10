@@ -1,13 +1,19 @@
 from collections.abc import Iterator
 
-from sqlalchemy import create_engine
+from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core import Settings
 
 
-def create_session_factory(settings: Settings) -> sessionmaker[Session]:
-    engine = create_engine(settings.database_url, pool_pre_ping=True)
+def create_db_engine(settings: Settings) -> Engine:
+    return create_engine(settings.database_url, pool_pre_ping=True)
+
+
+def create_session_factory(
+    settings: Settings, engine: Engine | None = None
+) -> sessionmaker[Session]:
+    engine = engine or create_db_engine(settings)
     return sessionmaker(bind=engine, expire_on_commit=False)
 
 

@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from app.api import build_router
 from app.core import Settings
 from app.core.errors import ConflictError, EntityNotFoundError, InvalidReferenceError
-from app.db import create_session_factory, session_dependency
+from app.db import create_db_engine, create_session_factory, session_dependency
 from app.events import Event, EventBus
 from app.repositories import (
     AutomationRepository,
@@ -28,7 +28,8 @@ def create_app(
     settings: Settings | None = None, *, run_simulator: bool = True
 ) -> FastAPI:
     settings = settings or Settings.from_env()
-    session_factory = create_session_factory(settings)
+    engine = create_db_engine(settings)
+    session_factory = create_session_factory(settings, engine)
     get_session = session_dependency(session_factory)
     event_bus = EventBus()
     connections = ConnectionManager()
@@ -62,11 +63,14 @@ def create_app(
             )
             interval = float(os.getenv("KZHOME_SIMULATOR_INTERVAL", "5"))
             task = asyncio.create_task(VirtualDeviceSimulator(devices, interval).run())
-        yield
-        if task is not None:
-            await stop_simulator(task)
-        if simulator_session is not None:
-            simulator_session.close()
+        try:
+            yield
+        finally:
+            if task is not None:
+                await stop_simulator(task)
+            if simulator_session is not None:
+                simulator_session.close()
+            engine.dispose()
 
     # API responses never expose tracebacks; APP_DEBUG remains available to
     # infrastructure for local logging configuration.
