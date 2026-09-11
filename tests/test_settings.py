@@ -10,7 +10,7 @@ def clear_settings_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
 
-def test_development_loads_dotenv_without_overriding_environment(
+def test_development_loads_dotenv(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     clear_settings_environment(monkeypatch)
@@ -19,12 +19,27 @@ def test_development_loads_dotenv_without_overriding_environment(
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
+
+    settings = Settings.from_env()
+
+    assert settings.database_url == "sqlite:///from-dotenv.db"
+    assert settings.app_debug is True
+
+
+def test_environment_variables_take_priority_over_dotenv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clear_settings_environment(monkeypatch)
+    (tmp_path / ".env").write_text(
+        "DATABASE_URL=sqlite:///from-dotenv.db\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("DATABASE_URL", "sqlite:///from-environment.db")
 
     settings = Settings.from_env()
 
     assert settings.database_url == "sqlite:///from-environment.db"
-    assert settings.app_debug is True
 
 
 def test_production_does_not_load_local_dotenv(
