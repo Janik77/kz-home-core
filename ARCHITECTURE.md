@@ -9,6 +9,8 @@
 5. **EventBus** (`app/events`) connects state changes to automation, event history and WebSocket delivery in one process.
 6. **Transport layer** (`app/transports`) isolates device commands from MQTT or future hardware protocols.
 
+The transport-independent device contract is frozen in [DEVICE_PROTOCOL.md](DEVICE_PROTOCOL.md). Core business logic operates on normalized Device, Capability, State, Command, and Event concepts; transport-specific adapters must map to that contract rather than bypass it.
+
 ## Automation Engine
 
 Automations are declarative data: one `device_state` trigger, AND-combined
