@@ -7,6 +7,7 @@ from app.events import EventBus
 from app.repositories import (
     AutomationRepository,
     DeviceRepository,
+    EventLogRepository,
     FloorRepository,
     HouseRepository,
     RoomRepository,
@@ -33,10 +34,12 @@ from app.schemas import (
     SceneCreate,
     SceneRead,
     SceneUpdate,
+    EventLogRead,
 )
 from app.services.automation_service import AutomationService
 from app.services.crud_service import CrudService
 from app.services.device_service import DeviceService
+from app.services.event_log_service import EventLogService
 from app.services.scene_service import SceneService
 
 
@@ -75,7 +78,7 @@ def build_router(get_session: Any, event_bus: EventBus) -> APIRouter:
 
     @router.get("/health")
     def health() -> dict[str, str]:
-        return {"status": "ok", "version": "0.3.0"}
+        return {"status": "ok", "version": "0.4.0"}
 
     @router.post("/houses", response_model=HouseRead, status_code=201)
     def create_house(data: HouseCreate, session: Session = Depends(get_session)):
@@ -240,5 +243,28 @@ def build_router(get_session: Any, event_bus: EventBus) -> APIRouter:
     def delete_automation(entity_id: str, session: Session = Depends(get_session)):
         automation_service(session).delete(entity_id)
         return Response(status_code=204)
+
+    @router.post("/automations/{entity_id}/enable", response_model=AutomationRead)
+    def enable_automation(entity_id: str, session: Session = Depends(get_session)):
+        return automation_service(session).set_enabled(entity_id, True)
+
+    @router.post("/automations/{entity_id}/disable", response_model=AutomationRead)
+    def disable_automation(entity_id: str, session: Session = Depends(get_session)):
+        return automation_service(session).set_enabled(entity_id, False)
+
+    @router.post("/automations/{entity_id}/run", response_model=AutomationRead)
+    async def run_automation(entity_id: str, session: Session = Depends(get_session)):
+        return await automation_service(session).manual_run(entity_id)
+
+    @router.get("/events", response_model=list[EventLogRead])
+    def list_events(
+        house_id: str | None = None,
+        event_type: str | None = None,
+        limit: int = Query(100, ge=1, le=500),
+        session: Session = Depends(get_session),
+    ):
+        return EventLogService(EventLogRepository(session)).list(
+            house_id, event_type, limit
+        )
 
     return router

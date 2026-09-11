@@ -45,7 +45,10 @@ class SceneService:
         for action in scene.actions:
             await self.devices.update_state(action.device_id, action.state)
         await self.event_bus.publish(
-            Event(type="scene_started", data={"scene_id": scene.id})
+            Event(
+                type="scene_started",
+                data={"scene_id": scene.id, "house_id": scene.house_id},
+            )
         )
         return scene
 

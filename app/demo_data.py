@@ -103,7 +103,7 @@ def automations():
             name="Свет в коридоре по движению",
             house_id="home1",
             trigger=AutomationTrigger(
-                device_id="hall_motion", field="motion", equals=True
+                device_id="hall_motion", field="motion", operator="eq", value=True
             ),
             actions=[DeviceAction(device_id="living_room_light", state={"on": True})],
         )

@@ -14,15 +14,17 @@ from app.events import Event, EventBus
 from app.repositories import (
     AutomationRepository,
     DeviceRepository,
+    EventLogRepository,
     HouseRepository,
     RoomRepository,
 )
 from app.services.automation_service import AutomationService
 from app.services.device_service import DeviceService
+from app.services.event_log_service import EventLogService
 from app.websocket import ConnectionManager
 from simulator.virtual_device import VirtualDeviceSimulator, stop_simulator
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 logger = logging.getLogger(__name__)
 
 
@@ -35,8 +37,9 @@ def create_app(
     get_session = session_dependency(session_factory)
     event_bus = EventBus()
     connections = ConnectionManager()
+    automation_tasks: set[asyncio.Task[None]] = set()
 
-    async def run_automations(event: Event) -> None:
+    async def process_automations(event: Event) -> None:
         with session_factory() as session:
             devices = DeviceService(
                 DeviceRepository(session), RoomRepository(session), event_bus
@@ -49,7 +52,32 @@ def create_app(
             )
             await service.handle_event(event)
 
-    event_bus.subscribe(run_automations)
+    async def schedule_automations(event: Event) -> None:
+        if event.type != "device_state_changed":
+            return
+        task = asyncio.create_task(process_automations(event))
+        automation_tasks.add(task)
+
+        def task_finished(done: asyncio.Task[None]) -> None:
+            automation_tasks.discard(done)
+            error = None if done.cancelled() else done.exception()
+            if error is not None:
+                logger.error(
+                    "Automation event processing failed",
+                    exc_info=(type(error), error, error.__traceback__),
+                )
+
+        task.add_done_callback(task_finished)
+
+    async def log_event(event: Event) -> None:
+        try:
+            with session_factory() as session:
+                await EventLogService(EventLogRepository(session)).handle_event(event)
+        except Exception:
+            logger.exception("Failed to persist event %s", event.type)
+
+    event_bus.subscribe(schedule_automations)
+    event_bus.subscribe(log_event)
     event_bus.subscribe(connections.handle_event)
 
     @asynccontextmanager
@@ -76,6 +104,10 @@ def create_app(
         finally:
             if task is not None:
                 await stop_simulator(task)
+            for automation_task in tuple(automation_tasks):
+                automation_task.cancel()
+            if automation_tasks:
+                await asyncio.gather(*automation_tasks, return_exceptions=True)
             engine.dispose()
 
     # API responses never expose tracebacks; APP_DEBUG remains available to

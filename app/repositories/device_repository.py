@@ -30,3 +30,15 @@ class DeviceRepository(Repository[DeviceORM]):
         if online is not None:
             statement = statement.where(DeviceORM.online == online)
         return list(self.session.scalars(statement).all())
+
+    def house_id(self, device_id: str) -> str:
+        statement = (
+            select(FloorORM.house_id)
+            .join(RoomORM, RoomORM.floor_id == FloorORM.id)
+            .join(DeviceORM, DeviceORM.room_id == RoomORM.id)
+            .where(DeviceORM.id == device_id)
+        )
+        house_id = self.session.scalar(statement)
+        if house_id is None:
+            self.get(device_id)
+        return house_id  # type: ignore[return-value]

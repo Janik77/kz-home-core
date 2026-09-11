@@ -1,4 +1,4 @@
-# KZ Home Core v0.3
+# KZ Home Core v0.4
 
 KZ Home Core — компактное ядро умного дома на FastAPI, Pydantic и SQLAlchemy 2.
 PostgreSQL хранит структуру дома, устройства, сцены и автоматизации; EventBus,
@@ -78,6 +78,46 @@ Simulator работает фоновой задачей и последоват
 `/scenes`, `/scenes/{id}/run` и `/ws`. Для houses, floors, rooms, devices,
 scenes и automations доступен CRUD. `GET /devices` принимает фильтры `house_id`,
 `room_id`, `type` и `online`.
+
+Automation Engine принимает только декларативные JSON-правила. Он не выполняет
+Python-код, shell-команды, `eval` или `exec`. Подробности: [ARCHITECTURE.md](ARCHITECTURE.md).
+
+### Motion → light
+
+```json
+{
+  "trigger": {"type": "device_state", "device_id": "hall_motion", "field": "motion", "operator": "eq", "value": true},
+  "conditions": [],
+  "actions": [{"type": "device_state", "device_id": "living_room_light", "state": {"on": true}}]
+}
+```
+
+### Night motion → brightness 15%
+
+```json
+{
+  "trigger": {"type": "device_state", "device_id": "hall_motion", "field": "motion", "operator": "eq", "value": true},
+  "conditions": [{"type": "time", "after": "23:00", "before": "07:00"}],
+  "actions": [{"type": "device_state", "device_id": "living_room_light", "state": {"on": true, "brightness": 15}}]
+}
+```
+
+### Delay → light off
+
+```json
+{
+  "trigger": {"type": "device_state", "device_id": "hall_motion", "field": "motion", "operator": "eq", "value": false},
+  "conditions": [],
+  "actions": [
+    {"type": "delay", "seconds": 60},
+    {"type": "device_state", "device_id": "living_room_light", "state": {"on": false}}
+  ]
+}
+```
+
+Состояние automation меняется через `/automations/{id}/enable` и `/disable`, а
+`/automations/{id}/run` запускает правило вручную. История важных событий доступна
+через `GET /events` с фильтрами `house_id`, `event_type` и `limit`.
 
 ## Тесты
 

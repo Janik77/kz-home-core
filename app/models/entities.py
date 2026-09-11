@@ -93,6 +93,7 @@ class SceneORM(TimestampMixin, Base):
 
 class AutomationORM(TimestampMixin, Base):
     __tablename__ = "automations"
+    __table_args__ = (Index("ix_automations_house_enabled", "house_id", "enabled"),)
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(255))
     house_id: Mapped[str] = mapped_column(
@@ -103,3 +104,22 @@ class AutomationORM(TimestampMixin, Base):
     conditions: Mapped[list[dict[str, Any]]] = mapped_column(JsonType, default=list)
     actions: Mapped[list[dict[str, Any]]] = mapped_column(JsonType, default=list)
     house: Mapped[HouseORM] = relationship(back_populates="automations")
+
+
+class EventLogORM(Base):
+    __tablename__ = "event_logs"
+    __table_args__ = (
+        Index("ix_event_logs_house_created", "house_id", "created_at"),
+        Index("ix_event_logs_type", "event_type"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    house_id: Mapped[str | None] = mapped_column(
+        ForeignKey("houses.id", ondelete="SET NULL"), nullable=True
+    )
+    event_type: Mapped[str] = mapped_column(String(64))
+    entity_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+    correlation_id: Mapped[str] = mapped_column(String(36), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
