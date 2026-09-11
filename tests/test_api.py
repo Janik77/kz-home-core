@@ -240,6 +240,7 @@ def test_invalid_rule_and_capability_validation(seeded_client: TestClient) -> No
 
 
 def test_disabled_automation_and_manual_run(seeded_client: TestClient) -> None:
+    seeded_client.post("/automations/hall_motion_light/disable")
     payload = automation_payload("manual", enabled=False)
     assert seeded_client.post("/automations", json=payload).status_code == 201
     seeded_client.patch("/devices/hall_motion/state", json={"motion": True})

@@ -4,7 +4,4 @@ uvicorn[standard]==0.35.0
 SQLAlchemy==2.0.43
 alembic==1.16.5
 psycopg[binary]==3.2.10
-
-# Development and test dependencies
-httpx==0.28.1
-pytest==8.4.1
+python-dotenv==1.1.1

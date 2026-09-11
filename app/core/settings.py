@@ -1,5 +1,8 @@
 import os
 from dataclasses import dataclass
+from pathlib import Path
+
+from dotenv import load_dotenv
 
 
 @dataclass(frozen=True)
@@ -11,6 +14,12 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
+        # Local files are a development convenience only. Explicit process
+        # environment values win because python-dotenv never overrides them.
+        app_env = os.getenv("APP_ENV", "development")
+        if app_env.lower() in {"development", "test", "local"}:
+            load_dotenv(Path.cwd() / ".env", override=False)
+
         database_url = os.getenv("DATABASE_URL")
         if not database_url:
             raise RuntimeError("DATABASE_URL environment variable is required")
