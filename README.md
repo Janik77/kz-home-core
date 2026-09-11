@@ -27,9 +27,10 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Экспортируйте настройки из `.env` удобным для вашей оболочки способом. Обязателен
-`DATABASE_URL`; реальные пароли нельзя коммитить. Поддерживаются также `APP_ENV`
-и `APP_DEBUG`.
+В development/test файл `.env` загружается автоматически. Уже установленные
+переменные процесса имеют приоритет над значениями из файла. При явном
+`APP_ENV=production` локальный `.env` не загружается. `DATABASE_URL` остаётся
+обязательным, а реальные пароли нельзя коммитить.
 
 ```bash
 export DATABASE_URL='postgresql+psycopg://kzhome:password@localhost:5432/kzhome'
@@ -124,5 +125,7 @@ Python-код, shell-команды, `eval` или `exec`. Подробност�
 Тесты явно используют отдельную SQLite database и не подключаются к production:
 
 ```bash
+pip install -r requirements-dev.txt
 pytest
+ruff check app simulator tests
 ```
