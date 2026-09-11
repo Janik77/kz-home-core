@@ -7,6 +7,9 @@ from app.schemas import EventLogRead
 
 IMPORTANT_EVENTS = {
     "device_state_changed",
+    "device_ack_received",
+    "device_telemetry_received",
+    "device_status_changed",
     "scene_started",
     "automation_triggered",
     "automation_completed",

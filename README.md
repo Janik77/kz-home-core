@@ -1,4 +1,4 @@
-# KZ Home Core v0.4
+# KZ Home Core v0.5
 
 KZ Home Core — компактное ядро умного дома на FastAPI, Pydantic и SQLAlchemy 2.
 PostgreSQL хранит структуру дома, устройства, сцены и автоматизации; EventBus,
@@ -37,6 +37,63 @@ export DATABASE_URL='postgresql+psycopg://kzhome:password@localhost:5432/kzhome'
 export APP_ENV=development
 export APP_DEBUG=false
 export KZHOME_SIMULATOR_ENABLED=false
+```
+
+### MQTT Device Gateway
+
+MQTT по умолчанию отключён (`MQTT_ENABLED=false`), поэтому development и HTTP
+API не требуют доступного broker. Для локального broker включите gateway явно:
+
+```bash
+export MQTT_ENABLED=true
+export MQTT_HOST=localhost
+export MQTT_PORT=1883
+export MQTT_CLIENT_ID=kzhome-core-development
+export MQTT_KEEPALIVE=60
+export MQTT_TLS_ENABLED=false
+# MQTT_USERNAME и MQTT_PASSWORD задаются вместе, если broker их требует.
+uvicorn app.main:app --reload
+```
+
+При включении обязательны `MQTT_HOST` и уникальный `MQTT_CLIENT_ID`. В
+`APP_ENV=production` gateway не запустится без `MQTT_TLS_ENABLED=true`;
+credentials должны поступать только из environment/secret manager и не должны
+попадать в MQTT payload, EventLog или logs. Broker ACL должен изолировать house
+и разрешать физическому device доступ только к его собственным topics.
+
+Device Protocol v1 использует namespace
+`kzhome/v1/{house_id}/{device_id}/{state|set|ack|telemetry|status}`. Полный
+контракт: [DEVICE_PROTOCOL.md](DEVICE_PROTOCOL.md). Gateway подключается и
+переподключается в background, поэтому недоступный broker не блокирует запуск
+HTTP API.
+
+Command (`.../set`, QoS 1, non-retained):
+
+```json
+{"protocol_version":"v1","command_id":"550e8400-e29b-41d4-a716-446655440000","correlation_id":"c8ec0c3c-2204-46f5-bddb-6076ec2f45d0","timestamp":"2026-09-11T12:00:00Z","state":{"brightness":65}}
+```
+
+Current state (`.../state`, QoS 1, retained):
+
+```json
+{"protocol_version":"v1","timestamp":"2026-09-11T12:00:01Z","correlation_id":"c8ec0c3c-2204-46f5-bddb-6076ec2f45d0","state":{"on":true,"brightness":65}}
+```
+
+ACK (`.../ack`, QoS 1, non-retained):
+
+```json
+{"protocol_version":"v1","command_id":"550e8400-e29b-41d4-a716-446655440000","correlation_id":"c8ec0c3c-2204-46f5-bddb-6076ec2f45d0","status":"applied"}
+```
+
+Status (`.../status`, QoS 1, retained) and telemetry (`.../telemetry`, QoS 0,
+non-retained) remain separate from authoritative state:
+
+```json
+{"protocol_version":"v1","status":"online","last_seen":"2026-09-11T12:03:00Z","heartbeat_interval_seconds":60}
+```
+
+```json
+{"protocol_version":"v1","timestamp":"2026-09-11T12:03:10Z","metrics":{"rssi":-61,"uptime":86420,"free_heap":118240,"temperature":42.5,"firmware_version":"1.4.2"}}
 ```
 
 ## Миграции, demo data и запуск

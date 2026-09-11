@@ -1,19 +1,26 @@
 from typing import Any
 
+from app.core.errors import InvalidReferenceError
 from app.events import Event, EventBus
 from app.repositories.device_repository import DeviceRepository
 from app.repositories.room_repository import RoomRepository
 from app.schemas import DeviceCreate, DeviceRead, DeviceState, DeviceUpdate
 from app.services.state_validator import StateValidator
+from app.transports.base import Transport
 
 
 class DeviceService:
     def __init__(
-        self, repository: DeviceRepository, rooms: RoomRepository, event_bus: EventBus
+        self,
+        repository: DeviceRepository,
+        rooms: RoomRepository,
+        event_bus: EventBus,
+        transport: Transport | None = None,
     ) -> None:
         self.repository = repository
         self.rooms = rooms
         self.event_bus = event_bus
+        self.transport = transport
         self.state_validator = StateValidator()
 
     def list(
@@ -61,7 +68,44 @@ class DeviceService:
     ) -> DeviceRead:
         entity = self.repository.get(device_id)
         current = self._read(entity)
+        if self.transport is not None:
+            self.state_validator.validate_command(current, patch)
+            await self.transport.send_command(
+                self.repository.house_id(device_id),
+                device_id,
+                patch,
+                correlation_id=correlation_id,
+            )
+            return current
         self.state_validator.validate(current, patch)
+        return await self._persist_state(
+            entity, device_id, patch, correlation_id=correlation_id, depth=depth
+        )
+
+    async def report_state(
+        self,
+        house_id: str,
+        device_id: str,
+        patch: DeviceState,
+        *,
+        correlation_id: str = "",
+    ) -> DeviceRead:
+        entity = self.repository.get(device_id)
+        self.require_house(house_id, device_id)
+        self.state_validator.validate_report(self._read(entity), patch)
+        return await self._persist_state(
+            entity, device_id, patch, correlation_id=correlation_id
+        )
+
+    async def _persist_state(
+        self,
+        entity: Any,
+        device_id: str,
+        patch: DeviceState,
+        *,
+        correlation_id: str,
+        depth: int = 0,
+    ) -> DeviceRead:
         changed = {
             key: value for key, value in patch.items() if entity.state.get(key) != value
         }
@@ -82,6 +126,23 @@ class DeviceService:
             )
         )
         return self._read(updated)
+
+    def require_house(self, house_id: str, device_id: str) -> DeviceRead:
+        device = self.get(device_id)
+        if self.repository.house_id(device_id) != house_id:
+            raise InvalidReferenceError("Device does not belong to MQTT topic house")
+        return device
+
+    async def update_status(
+        self, house_id: str, device_id: str, online: bool, last_seen: Any
+    ) -> bool:
+        device = self.require_house(house_id, device_id)
+        changed = device.online != online
+        metadata = {**device.metadata, "last_seen": last_seen.isoformat()}
+        self.repository.update(
+            device_id, {"online": online, "metadata": metadata}
+        )
+        return changed
 
     def _validate_room(self, room_id: str) -> None:
         from app.core.errors import InvalidReferenceError

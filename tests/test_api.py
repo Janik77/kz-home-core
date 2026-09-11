@@ -18,6 +18,7 @@ from app.db import Base
 from app.main import create_app
 from app.models import DeviceORM, HouseORM
 from app.seed import main as seed
+from app.transports import FakeMQTTClient
 
 
 @pytest.fixture
@@ -56,7 +57,7 @@ def seeded_client(db_settings: Settings) -> Iterator[TestClient]:
 def test_lifespan_starts_and_stops_when_simulator_disabled(
     client: TestClient,
 ) -> None:
-    assert client.get("/health").json() == {"status": "ok", "version": "0.4.0"}
+    assert client.get("/health").json() == {"status": "ok", "version": "0.5.0"}
 
 
 def test_enabled_simulator_does_not_block_startup(
@@ -69,6 +70,30 @@ def test_enabled_simulator_does_not_block_startup(
         simulator_enabled=True,
     )
     with TestClient(create_app(enabled_settings)) as test_client:
+        assert test_client.get("/health").status_code == 200
+
+
+def test_mqtt_disabled_does_not_connect(db_settings: Settings) -> None:
+    mqtt = FakeMQTTClient()
+    with TestClient(
+        create_app(db_settings, run_simulator=False, mqtt_client=mqtt)
+    ) as test_client:
+        assert test_client.get("/health").json()["version"] == "0.5.0"
+    assert mqtt.connect_calls == 0
+
+
+def test_broker_failure_does_not_block_api_startup(db_settings: Settings) -> None:
+    mqtt = FakeMQTTClient(connect_error=ConnectionError("broker unavailable"))
+    enabled = Settings(
+        database_url=db_settings.database_url,
+        app_env="test",
+        mqtt_enabled=True,
+        mqtt_host="broker.invalid",
+        mqtt_client_id="test-core",
+    )
+    with TestClient(
+        create_app(enabled, run_simulator=False, mqtt_client=mqtt)
+    ) as test_client:
         assert test_client.get("/health").status_code == 200
 
 
