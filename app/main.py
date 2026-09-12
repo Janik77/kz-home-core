@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -21,15 +22,20 @@ from app.repositories import (
 from app.services.automation_service import AutomationService
 from app.services.device_service import DeviceService
 from app.services.event_log_service import EventLogService
+from app.transports import AiomqttClient, MQTTClient, MQTTGateway, Transport
 from app.websocket import ConnectionManager
 from simulator.virtual_device import VirtualDeviceSimulator, stop_simulator
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 logger = logging.getLogger(__name__)
 
 
 def create_app(
-    settings: Settings | None = None, *, run_simulator: bool | None = None
+    settings: Settings | None = None,
+    *,
+    run_simulator: bool | None = None,
+    mqtt_client: MQTTClient | None = None,
+    mqtt_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     engine = create_db_engine(settings)
@@ -38,11 +44,64 @@ def create_app(
     event_bus = EventBus()
     connections = ConnectionManager()
     automation_tasks: set[asyncio.Task[None]] = set()
+    gateway: MQTTGateway | None = None
+
+    if settings.mqtt_enabled:
+        client = mqtt_client or AiomqttClient(
+            host=settings.mqtt_host or "",
+            port=settings.mqtt_port,
+            username=settings.mqtt_username,
+            password=settings.mqtt_password,
+            tls_enabled=settings.mqtt_tls_enabled,
+            keepalive=settings.mqtt_keepalive,
+            client_id=settings.mqtt_client_id or "",
+        )
+
+        async def receive_state(
+            house_id: str,
+            device_id: str,
+            state: dict,
+            correlation_id: str,
+        ) -> None:
+            with session_factory() as session:
+                await DeviceService(
+                    DeviceRepository(session), RoomRepository(session), event_bus
+                ).report_state(
+                    house_id, device_id, state, correlation_id=correlation_id
+                )
+
+        async def receive_status(
+            house_id: str, device_id: str, online: bool, last_seen
+        ) -> bool:
+            with session_factory() as session:
+                return await DeviceService(
+                    DeviceRepository(session), RoomRepository(session), event_bus
+                ).update_status(house_id, device_id, online, last_seen)
+
+        async def validate_identity(house_id: str, device_id: str) -> None:
+            with session_factory() as session:
+                DeviceService(
+                    DeviceRepository(session), RoomRepository(session), event_bus
+                ).require_house(house_id, device_id)
+
+        gateway = MQTTGateway(
+            client,
+            event_bus,
+            receive_state,
+            receive_status,
+            validate_identity,
+            sleep=mqtt_sleep,
+        )
+
+    command_transport: Transport | None = gateway
 
     async def process_automations(event: Event) -> None:
         with session_factory() as session:
             devices = DeviceService(
-                DeviceRepository(session), RoomRepository(session), event_bus
+                DeviceRepository(session),
+                RoomRepository(session),
+                event_bus,
+                command_transport,
             )
             service = AutomationService(
                 AutomationRepository(session),
@@ -99,9 +158,13 @@ def create_app(
             task = asyncio.create_task(
                 simulator.run(), name="kzhome-virtual-device-simulator"
             )
+        if gateway is not None:
+            gateway.start()
         try:
             yield
         finally:
+            if gateway is not None:
+                await gateway.stop()
             if task is not None:
                 await stop_simulator(task)
             for automation_task in tuple(automation_tasks):
@@ -116,7 +179,8 @@ def create_app(
         title="KZ Home Core", version=VERSION, debug=False, lifespan=lifespan
     )
     application.state.settings = settings
-    application.include_router(build_router(get_session, event_bus))
+    application.state.mqtt_gateway = gateway
+    application.include_router(build_router(get_session, event_bus, command_transport))
 
     @application.exception_handler(EntityNotFoundError)
     async def not_found_handler(_, error: EntityNotFoundError) -> JSONResponse:

@@ -26,10 +26,16 @@ in EventLog without secrets.
 There are deliberately no dynamic imports, `eval`, `exec`, shell commands, or
 general expression language in the engine.
 
-## Future boundaries
+## Device Gateway and future boundaries
+
+The v0.5 MQTT Gateway is a lifecycle-managed transport adapter. It maps Device
+Protocol v1 envelopes to normalized events, but opens database sessions only
+through application callbacks that invoke DeviceService. DeviceService remains
+the authority for identity, house, capability, and state validation. Broker
+reconnect runs in the background and does not gate HTTP application startup.
 
 A future **AI layer** may translate natural language into automation JSON, but
 that JSON must pass the same Pydantic, capability, device and house validation;
 AI will never execute code. Future **hardware layers** (MQTT devices, BLE Mesh,
 Zigbee, Matter) will implement transport interfaces and cannot bypass services or
-state validation. None of those integrations is implemented in v0.4.
+state validation. BLE Mesh, Zigbee, and Matter integrations are not implemented.

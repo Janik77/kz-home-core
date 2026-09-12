@@ -41,9 +41,12 @@ from app.services.crud_service import CrudService
 from app.services.device_service import DeviceService
 from app.services.event_log_service import EventLogService
 from app.services.scene_service import SceneService
+from app.transports import Transport
 
 
-def build_router(get_session: Any, event_bus: EventBus) -> APIRouter:
+def build_router(
+    get_session: Any, event_bus: EventBus, transport: Transport | None = None
+) -> APIRouter:
     router = APIRouter()
 
     def structure(session: Session, kind: str) -> CrudService[Any]:
@@ -57,7 +60,7 @@ def build_router(get_session: Any, event_bus: EventBus) -> APIRouter:
 
     def device_service(session: Session) -> DeviceService:
         return DeviceService(
-            DeviceRepository(session), RoomRepository(session), event_bus
+            DeviceRepository(session), RoomRepository(session), event_bus, transport
         )
 
     def scene_service(session: Session) -> SceneService:
@@ -78,7 +81,7 @@ def build_router(get_session: Any, event_bus: EventBus) -> APIRouter:
 
     @router.get("/health")
     def health() -> dict[str, str]:
-        return {"status": "ok", "version": "0.4.0"}
+        return {"status": "ok", "version": "0.5.0"}
 
     @router.post("/houses", response_model=HouseRead, status_code=201)
     def create_house(data: HouseCreate, session: Session = Depends(get_session)):
