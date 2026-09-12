@@ -140,6 +140,43 @@ scenes и automations доступен CRUD. `GET /devices` принимает �
 Automation Engine принимает только декларативные JSON-правила. Он не выполняет
 Python-код, shell-команды, `eval` или `exec`. Подробности: [ARCHITECTURE.md](ARCHITECTURE.md).
 
+## Authentication foundation (v0.6a)
+
+Human identities are stored as normalized users with Argon2id password hashes.
+A user receives house-scoped authority through one membership (`owner`,
+`installer`, `technician`, or `resident`) per house. Permissions are defined in a
+single role matrix. This release secures the new authentication endpoints; broad
+RBAC enforcement on the existing house/device/scene APIs is intentionally deferred
+to v0.6b.
+
+Set `AUTH_JWT_SECRET` to a unique random value of at least 32 characters in
+production. `AUTH_JWT_ALGORITHM` defaults to `HS256`, access lifetime to 15
+minutes, and refresh lifetime to 30 days. The checked-in secret is only a local
+development placeholder and is rejected in production. Optional `AUTH_DEMO_EMAIL`
+and `AUTH_DEMO_PASSWORD` create a user during seed only outside production and
+only when both values are explicitly supplied. Production gateways/proxies must
+rate-limit `/auth/login` and `/auth/refresh`; the application caps credential and
+token input sizes but does not claim distributed rate limiting.
+
+Example flow (replace all placeholder values):
+
+```bash
+curl -X POST http://127.0.0.1:8000/auth/login \
+  -H 'content-type: application/json' \
+  -d '{"email":"user@example.invalid","password":"<development-password>"}'
+curl -X POST http://127.0.0.1:8000/auth/refresh \
+  -H 'content-type: application/json' -d '{"refresh_token":"<refresh-token>"}'
+curl -X POST http://127.0.0.1:8000/auth/logout \
+  -H 'content-type: application/json' -d '{"refresh_token":"<refresh-token>"}'
+curl http://127.0.0.1:8000/auth/me -H 'Authorization: Bearer <access-token>'
+```
+
+Refresh tokens rotate on use and their hashed identifiers are tracked server-side
+for revocation. API responses never include password hashes. Owners have all
+house permissions; installers manage installation devices/scenes/automations;
+technicians manage and diagnose devices; residents read/control devices and
+read/run scenes. Member and house administration remain owner-only.
+
 ### Motion → light
 
 ```json

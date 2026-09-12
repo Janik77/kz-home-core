@@ -6,6 +6,9 @@ from app.models.entities import (
     HouseORM,
     RoomORM,
     SceneORM,
+    UserORM,
+    HouseMembershipORM,
+    RefreshSessionORM,
 )
 
 __all__ = [
@@ -16,4 +19,7 @@ __all__ = [
     "HouseORM",
     "RoomORM",
     "SceneORM",
+    "UserORM",
+    "HouseMembershipORM",
+    "RefreshSessionORM",
 ]

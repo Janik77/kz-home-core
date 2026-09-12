@@ -1,7 +1,18 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -31,6 +42,49 @@ class HouseORM(TimestampMixin, Base):
     )
     automations: Mapped[list["AutomationORM"]] = relationship(
         back_populates="house", cascade="all, delete-orphan"
+    )
+
+
+class UserORM(TimestampMixin, Base):
+    __tablename__ = "users"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(512))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_superuser: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class HouseMembershipORM(TimestampMixin, Base):
+    __tablename__ = "house_memberships"
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('owner', 'installer', 'technician', 'resident')",
+            name="ck_membership_role",
+        ),
+        UniqueConstraint("user_id", "house_id", name="uq_membership_user_house"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), index=True
+    )
+    house_id: Mapped[str] = mapped_column(
+        ForeignKey("houses.id", ondelete="RESTRICT"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(20))
+
+
+class RefreshSessionORM(Base):
+    __tablename__ = "refresh_sessions"
+    jti_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
 
 

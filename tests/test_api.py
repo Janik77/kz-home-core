@@ -57,7 +57,7 @@ def seeded_client(db_settings: Settings) -> Iterator[TestClient]:
 def test_lifespan_starts_and_stops_when_simulator_disabled(
     client: TestClient,
 ) -> None:
-    assert client.get("/health").json() == {"status": "ok", "version": "0.5.0"}
+    assert client.get("/health").json() == {"status": "ok", "version": "0.6.0a1"}
 
 
 def test_enabled_simulator_does_not_block_startup(
@@ -78,7 +78,7 @@ def test_mqtt_disabled_does_not_connect(db_settings: Settings) -> None:
     with TestClient(
         create_app(db_settings, run_simulator=False, mqtt_client=mqtt)
     ) as test_client:
-        assert test_client.get("/health").json()["version"] == "0.5.0"
+        assert test_client.get("/health").json()["version"] == "0.6.0a1"
     assert mqtt.connect_calls == 0
 
 

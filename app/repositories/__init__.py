@@ -5,6 +5,11 @@ from app.repositories.event_log_repository import EventLogRepository
 from app.repositories.house_repository import HouseRepository
 from app.repositories.room_repository import RoomRepository
 from app.repositories.scene_repository import SceneRepository
+from app.repositories.auth_repository import (
+    MembershipRepository,
+    RefreshSessionRepository,
+    UserRepository,
+)
 
 __all__ = [
     "AutomationRepository",
@@ -14,4 +19,7 @@ __all__ = [
     "HouseRepository",
     "RoomRepository",
     "SceneRepository",
+    "MembershipRepository",
+    "RefreshSessionRepository",
+    "UserRepository",
 ]

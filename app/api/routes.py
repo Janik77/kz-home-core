@@ -1,9 +1,11 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from app.events import EventBus
+from app.core import Settings
+from app.events import Event
 from app.repositories import (
     AutomationRepository,
     DeviceRepository,
@@ -12,6 +14,8 @@ from app.repositories import (
     HouseRepository,
     RoomRepository,
     SceneRepository,
+    RefreshSessionRepository,
+    UserRepository,
 )
 from app.schemas import (
     AutomationCreate,
@@ -35,7 +39,14 @@ from app.schemas import (
     SceneRead,
     SceneUpdate,
     EventLogRead,
+    LoginRequest,
+    TokenRequest,
+    TokenResponse,
+    UserRead,
 )
+from app.security import TokenCodec
+from app.api.dependencies import build_current_user_dependency
+from app.services.auth_service import AuthenticationError, AuthenticationService
 from app.services.automation_service import AutomationService
 from app.services.crud_service import CrudService
 from app.services.device_service import DeviceService
@@ -45,9 +56,28 @@ from app.transports import Transport
 
 
 def build_router(
-    get_session: Any, event_bus: EventBus, transport: Transport | None = None
+    get_session: Any,
+    event_bus: EventBus,
+    transport: Transport | None = None,
+    settings: Settings | None = None,
 ) -> APIRouter:
     router = APIRouter()
+    if settings is None:
+        raise ValueError("Settings are required for authentication")
+
+    codec = TokenCodec(
+        settings.auth_jwt_secret,
+        settings.auth_jwt_algorithm,
+        settings.auth_access_token_minutes,
+        settings.auth_refresh_token_days,
+    )
+
+    def auth_service(session: Session) -> AuthenticationService:
+        return AuthenticationService(
+            UserRepository(session), RefreshSessionRepository(session), codec
+        )
+
+    get_current_user = build_current_user_dependency(get_session, codec)
 
     def structure(session: Session, kind: str) -> CrudService[Any]:
         houses = HouseRepository(session)
@@ -81,7 +111,42 @@ def build_router(
 
     @router.get("/health")
     def health() -> dict[str, str]:
-        return {"status": "ok", "version": "0.5.0"}
+        return {"status": "ok", "version": "0.6.0a1"}
+
+    @router.post("/auth/login", response_model=TokenResponse)
+    async def login(data: LoginRequest, session: Session = Depends(get_session)):
+        try:
+            result = auth_service(session).login(str(data.email), data.password)
+        except AuthenticationError as error:
+            await event_bus.publish(Event(type="auth_login_failed", data={}))
+            raise HTTPException(
+                401, str(error), headers={"WWW-Authenticate": "Bearer"}
+            ) from error
+        await event_bus.publish(Event(type="auth_login_succeeded", data={}))
+        return result
+
+    @router.post("/auth/refresh", response_model=TokenResponse)
+    async def refresh(data: TokenRequest, session: Session = Depends(get_session)):
+        try:
+            result = auth_service(session).refresh(data.refresh_token)
+        except AuthenticationError as error:
+            await event_bus.publish(Event(type="auth_refresh_failed", data={}))
+            raise HTTPException(401, str(error)) from error
+        await event_bus.publish(Event(type="auth_refresh_succeeded", data={}))
+        return result
+
+    @router.post("/auth/logout", status_code=204)
+    async def logout(data: TokenRequest, session: Session = Depends(get_session)):
+        try:
+            auth_service(session).logout(data.refresh_token)
+        except AuthenticationError as error:
+            raise HTTPException(401, str(error)) from error
+        await event_bus.publish(Event(type="auth_logout", data={}))
+        return Response(status_code=204)
+
+    @router.get("/auth/me", response_model=UserRead)
+    def me(user=Depends(get_current_user)):
+        return user
 
     @router.post("/houses", response_model=HouseRead, status_code=201)
     def create_house(data: HouseCreate, session: Session = Depends(get_session)):

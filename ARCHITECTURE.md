@@ -26,6 +26,32 @@ in EventLog without secrets.
 There are deliberately no dynamic imports, `eval`, `exec`, shell commands, or
 general expression language in the engine.
 
+## Human identity and authorization
+
+Authentication follows the same API → service → repository → database boundary.
+Users have normalized unique email addresses and Argon2id hashes, never plaintext
+passwords. Short-lived signed access JWTs identify a human; refresh JWT identifiers
+are SHA-256 hashed in server-side sessions, revoked on logout, and rotated on every
+refresh. Deactivation immediately prevents login, refresh, and authenticated API use.
+Production rejects absent, short, or placeholder signing secrets.
+
+House membership is the authorization boundary: membership in one house conveys
+no rights in another. The centralized permission matrix grants owners every house
+permission, narrower commissioning rights to installers, diagnostic device rights
+to technicians, and normal control/scene rights to residents. Authentication only
+establishes identity; `require_house_permission` performs the separate house-scoped
+authorization step. v0.6a establishes and tests this boundary, while v0.6b will
+apply it across existing endpoints.
+
+Human JWT identity is separate from physical-device identity. MQTT devices must
+never use user tokens, and device credentials must never be stored in `users` or
+refresh sessions. Device provisioning and credentials are future work.
+
+Any future AI action must execute with the authenticated caller's identity and
+permissions. AI cannot elevate roles, alter membership, bypass
+`require_house_permission`, access JWT secrets/refresh tokens/device credentials,
+call transports directly, or bypass `DeviceService` and `StateValidator`.
+
 ## Device Gateway and future boundaries
 
 The v0.5 MQTT Gateway is a lifecycle-managed transport adapter. It maps Device
