@@ -26,7 +26,7 @@ from app.transports import AiomqttClient, MQTTClient, MQTTGateway, Transport
 from app.websocket import ConnectionManager
 from simulator.virtual_device import VirtualDeviceSimulator, stop_simulator
 
-VERSION = "0.5.0"
+VERSION = "0.6.0a1"
 logger = logging.getLogger(__name__)
 
 
@@ -180,7 +180,9 @@ def create_app(
     )
     application.state.settings = settings
     application.state.mqtt_gateway = gateway
-    application.include_router(build_router(get_session, event_bus, command_transport))
+    application.include_router(
+        build_router(get_session, event_bus, command_transport, settings)
+    )
 
     @application.exception_handler(EntityNotFoundError)
     async def not_found_handler(_, error: EntityNotFoundError) -> JSONResponse:

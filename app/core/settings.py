@@ -19,8 +19,22 @@ class Settings:
     mqtt_tls_enabled: bool = False
     mqtt_keepalive: int = 60
     mqtt_client_id: str | None = None
+    auth_jwt_secret: str = "development-only-change-me-32-bytes"
+    auth_jwt_algorithm: str = "HS256"
+    auth_access_token_minutes: int = 15
+    auth_refresh_token_days: int = 30
 
     def __post_init__(self) -> None:
+        if self.auth_jwt_algorithm not in {"HS256", "HS384", "HS512"}:
+            raise ValueError("AUTH_JWT_ALGORITHM must be an approved HMAC algorithm")
+        if self.auth_access_token_minutes < 1 or self.auth_refresh_token_days < 1:
+            raise ValueError("Authentication token lifetimes must be positive")
+        if self.app_env.lower() == "production" and (
+            len(self.auth_jwt_secret) < 32
+            or self.auth_jwt_secret == "development-only-change-me-32-bytes"
+            or "change-me" in self.auth_jwt_secret.lower()
+        ):
+            raise ValueError("Production requires a strong AUTH_JWT_SECRET")
         if not self.mqtt_enabled:
             return
         if not self.mqtt_host or not self.mqtt_client_id:
@@ -61,6 +75,12 @@ class Settings:
             mqtt_tls_enabled=_boolean("MQTT_TLS_ENABLED", False),
             mqtt_keepalive=_integer("MQTT_KEEPALIVE", 60),
             mqtt_client_id=_optional("MQTT_CLIENT_ID"),
+            auth_jwt_secret=os.getenv(
+                "AUTH_JWT_SECRET", "development-only-change-me-32-bytes"
+            ),
+            auth_jwt_algorithm=os.getenv("AUTH_JWT_ALGORITHM", "HS256"),
+            auth_access_token_minutes=_integer("AUTH_ACCESS_TOKEN_MINUTES", 15),
+            auth_refresh_token_days=_integer("AUTH_REFRESH_TOKEN_DAYS", 30),
         )
 
 
