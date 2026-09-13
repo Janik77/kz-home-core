@@ -26,6 +26,50 @@ in EventLog without secrets.
 There are deliberately no dynamic imports, `eval`, `exec`, shell commands, or
 general expression language in the engine.
 
+## Human identity and authorization
+
+Authentication follows the same API → service → repository → database boundary.
+Users have normalized unique email addresses and Argon2id hashes, never plaintext
+passwords. Short-lived signed access JWTs identify a human; refresh JWT identifiers
+are SHA-256 hashed in server-side sessions, revoked on logout, and rotated on every
+refresh. Deactivation immediately prevents login, refresh, and authenticated API use.
+Production rejects absent, short, or placeholder signing secrets.
+
+House membership is the authorization boundary: membership in one house conveys
+no rights in another. The centralized permission matrix grants owners every house
+permission, narrower commissioning rights to installers, diagnostic device rights
+to technicians, and normal control/scene rights to residents. Authentication only
+establishes identity; `require_house_permission` performs the separate house-scoped
+authorization step. v0.6a establishes and tests this boundary, while v0.6b will
+apply it across existing endpoints.
+
+v0.6b applies this sequence to every domain request: authenticate the human,
+resolve the resource's actual house through repositories, resolve membership,
+require the centralized permission, then invoke the existing domain service.
+Database-scoped list queries prevent cross-house enumeration without N+1 membership
+lookups. Cross-house IDs are intentionally hidden as `404`; an existing member who
+lacks a capability receives `403`. House creation and its initial owner membership
+commit atomically, and final-owner safeguards protect membership administration.
+`is_superuser` is conservative metadata in this version and grants no implicit
+house bypass.
+
+The WebSocket handshake accepts an access JWT in the `Authorization` header,
+validates the active user, and rechecks house membership while filtering each
+EventBus message by `house_id`. Unauthenticated clients close with code 4401, and
+global or security events are not broadcast. Runtime automations remain system-side stored
+rules: human create/change/enable/disable/manual-run calls are authorized, while
+execution still flows through the existing engine, DeviceService, StateValidator,
+and transport boundaries without attaching a human JWT to MQTT.
+
+Human JWT identity is separate from physical-device identity. MQTT devices must
+never use user tokens, and device credentials must never be stored in `users` or
+refresh sessions. Device provisioning and credentials are future work.
+
+Any future AI action must execute with the authenticated caller's identity and
+permissions. AI cannot elevate roles, alter membership, bypass
+`require_house_permission`, access JWT secrets/refresh tokens/device credentials,
+call transports directly, or bypass `DeviceService` and `StateValidator`.
+
 ## Device Gateway and future boundaries
 
 The v0.5 MQTT Gateway is a lifecycle-managed transport adapter. It maps Device

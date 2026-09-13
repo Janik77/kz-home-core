@@ -18,6 +18,15 @@ from app.repositories import (
     EventLogRepository,
     HouseRepository,
     RoomRepository,
+    MembershipRepository,
+    RefreshSessionRepository,
+    UserRepository,
+)
+from app.security import Permission, TokenCodec
+from app.services.auth_service import (
+    AuthenticationError,
+    AuthenticationService,
+    AuthorizationService,
 )
 from app.services.automation_service import AutomationService
 from app.services.device_service import DeviceService
@@ -26,7 +35,7 @@ from app.transports import AiomqttClient, MQTTClient, MQTTGateway, Transport
 from app.websocket import ConnectionManager
 from simulator.virtual_device import VirtualDeviceSimulator, stop_simulator
 
-VERSION = "0.5.0"
+VERSION = "0.6.0b1"
 logger = logging.getLogger(__name__)
 
 
@@ -180,7 +189,9 @@ def create_app(
     )
     application.state.settings = settings
     application.state.mqtt_gateway = gateway
-    application.include_router(build_router(get_session, event_bus, command_transport))
+    application.include_router(
+        build_router(get_session, event_bus, command_transport, settings)
+    )
 
     @application.exception_handler(EntityNotFoundError)
     async def not_found_handler(_, error: EntityNotFoundError) -> JSONResponse:
@@ -200,7 +211,34 @@ def create_app(
 
     @application.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket) -> None:
-        await connections.connect(websocket)
+        authorization = websocket.headers.get("authorization", "").split()
+        if len(authorization) != 2 or authorization[0].lower() != "bearer":
+            await websocket.close(code=4401)
+            return
+        access_token = authorization[1]
+        codec = TokenCodec(
+            settings.auth_jwt_secret,
+            settings.auth_jwt_algorithm,
+            settings.auth_access_token_minutes,
+            settings.auth_refresh_token_days,
+        )
+        with session_factory() as session:
+            try:
+                user = AuthenticationService(
+                    UserRepository(session), RefreshSessionRepository(session), codec
+                ).access_user(access_token)
+            except AuthenticationError:
+                await websocket.close(code=4401)
+                return
+            user_id = user.id
+
+        async def authorizes_house(house_id: str) -> bool:
+            with session_factory() as session:
+                service = AuthorizationService(MembershipRepository(session))
+                membership = service.get_house_membership(user_id, house_id)
+                return service.has_permission(membership, Permission.HOUSE_READ)
+
+        await connections.connect(websocket, authorizes_house)
         try:
             while True:
                 await websocket.receive_text()

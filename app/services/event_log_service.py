@@ -14,8 +14,14 @@ IMPORTANT_EVENTS = {
     "automation_triggered",
     "automation_completed",
     "automation_failed",
+    "auth_login_succeeded",
+    "auth_login_failed",
+    "auth_refresh_succeeded",
+    "auth_refresh_failed",
+    "auth_logout",
+    "authorization_denied",
 }
-SENSITIVE_KEYS = {"password", "token", "secret", "database_url", "authorization"}
+SENSITIVE_KEY_PARTS = ("password", "token", "secret", "authorization")
 
 
 def sanitized(value: Any) -> Any:
@@ -23,7 +29,8 @@ def sanitized(value: Any) -> Any:
         return {
             key: sanitized(item)
             for key, item in value.items()
-            if key.lower() not in SENSITIVE_KEYS
+            if key.lower() != "database_url"
+            and not any(part in key.lower() for part in SENSITIVE_KEY_PARTS)
         }
     if isinstance(value, list):
         return [sanitized(item) for item in value]
@@ -55,5 +62,19 @@ class EventLogService:
                 "entity_id": entity_id,
                 "payload": sanitized(event.data),
                 "correlation_id": event.correlation_id,
+            }
+        )
+
+    def authorization_denied(
+        self, user_id: str, house_id: str, permission: str
+    ) -> None:
+        self.repository.create(
+            {
+                "id": str(uuid4()),
+                "house_id": house_id,
+                "event_type": "authorization_denied",
+                "entity_id": user_id,
+                "payload": {"user_id": user_id, "permission": permission},
+                "correlation_id": str(uuid4()),
             }
         )

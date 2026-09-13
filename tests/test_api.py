@@ -17,6 +17,8 @@ from app.core import Settings
 from app.db import Base
 from app.main import create_app
 from app.models import DeviceORM, HouseORM
+from app.repositories import MembershipRepository, UserRepository
+from app.services.auth_service import UserService
 from app.seed import main as seed
 from app.transports import FakeMQTTClient
 
@@ -43,21 +45,50 @@ def db_settings(tmp_path: Path) -> Iterator[Settings]:
 
 @pytest.fixture
 def client(db_settings: Settings) -> Iterator[TestClient]:
+    with Session(create_engine(db_settings.database_url)) as session:
+        UserService(UserRepository(session)).create(
+            "owner@example.test", "test owner password"
+        )
     with TestClient(create_app(db_settings, run_simulator=False)) as test_client:
+        tokens = test_client.post(
+            "/auth/login",
+            json={"email": "owner@example.test", "password": "test owner password"},
+        ).json()
+        test_client.headers["Authorization"] = f"Bearer {tokens['access_token']}"
         yield test_client
 
 
 @pytest.fixture
 def seeded_client(db_settings: Settings) -> Iterator[TestClient]:
     seed(db_settings)
+    engine = create_engine(db_settings.database_url)
+    with Session(engine) as session:
+        user = UserService(UserRepository(session)).create(
+            "owner@example.test", "test owner password"
+        )
+        MembershipRepository(session).create(
+            {
+                "id": "test-owner",
+                "user_id": user.id,
+                "house_id": "home1",
+                "role": "owner",
+            }
+        )
+    engine.dispose()
     with TestClient(create_app(db_settings, run_simulator=False)) as test_client:
+        tokens = test_client.post(
+            "/auth/login",
+            json={"email": "owner@example.test", "password": "test owner password"},
+        ).json()
+        test_client.headers["Authorization"] = f"Bearer {tokens['access_token']}"
+        test_client.auth_access_token = tokens["access_token"]  # type: ignore[attr-defined]
         yield test_client
 
 
 def test_lifespan_starts_and_stops_when_simulator_disabled(
     client: TestClient,
 ) -> None:
-    assert client.get("/health").json() == {"status": "ok", "version": "0.5.0"}
+    assert client.get("/health").json() == {"status": "ok", "version": "0.6.0b1"}
 
 
 def test_enabled_simulator_does_not_block_startup(
@@ -78,7 +109,7 @@ def test_mqtt_disabled_does_not_connect(db_settings: Settings) -> None:
     with TestClient(
         create_app(db_settings, run_simulator=False, mqtt_client=mqtt)
     ) as test_client:
-        assert test_client.get("/health").json()["version"] == "0.5.0"
+        assert test_client.get("/health").json()["version"] == "0.6.0b1"
     assert mqtt.connect_calls == 0
 
 
@@ -176,7 +207,10 @@ def test_scene_execution_and_shortcuts(seeded_client: TestClient) -> None:
 
 
 def test_automation_trigger_and_websocket(seeded_client: TestClient) -> None:
-    with seeded_client.websocket_connect("/ws") as websocket:
+    with seeded_client.websocket_connect(
+        "/ws",
+        headers={"Authorization": f"Bearer {seeded_client.auth_access_token}"},  # type: ignore[attr-defined]
+    ) as websocket:
         assert (
             seeded_client.patch(
                 "/devices/hall_motion/state", json={"motion": True}
@@ -295,7 +329,10 @@ def test_delay_action_is_background_and_event_log_is_written(
     )
     assert seeded_client.post("/automations", json=payload).status_code == 201
     seeded_client.post("/devices/living_room_light/on")
-    with seeded_client.websocket_connect("/ws") as websocket:
+    with seeded_client.websocket_connect(
+        "/ws",
+        headers={"Authorization": f"Bearer {seeded_client.auth_access_token}"},  # type: ignore[attr-defined]
+    ) as websocket:
         seeded_client.patch("/devices/hall_motion/state", json={"motion": True})
         while True:
             event = websocket.receive_json()
@@ -361,7 +398,10 @@ def test_multiple_conditions_are_and_and_cross_house_is_rejected(
     )
     seeded_client.patch("/devices/hall_motion/state", json={"motion": False})
     seeded_client.patch("/devices/living_room_curtain/state", json={"position": 30})
-    with seeded_client.websocket_connect("/ws") as websocket:
+    with seeded_client.websocket_connect(
+        "/ws",
+        headers={"Authorization": f"Bearer {seeded_client.auth_access_token}"},  # type: ignore[attr-defined]
+    ) as websocket:
         seeded_client.patch("/devices/hall_motion/state", json={"motion": True})
         while websocket.receive_json()["type"] != "automation_completed":
             pass
@@ -439,7 +479,10 @@ def test_automation_failure_does_not_stop_other_rules(
     seeded_client.delete("/devices/temporary_light")
 
     seen: set[tuple[str, str]] = set()
-    with seeded_client.websocket_connect("/ws") as websocket:
+    with seeded_client.websocket_connect(
+        "/ws",
+        headers={"Authorization": f"Bearer {seeded_client.auth_access_token}"},  # type: ignore[attr-defined]
+    ) as websocket:
         seeded_client.patch("/devices/hall_motion/state", json={"motion": True})
         while {
             ("automation_failed", "will_fail"),
