@@ -19,6 +19,12 @@ def clear_settings_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "MQTT_TLS_ENABLED",
         "MQTT_KEEPALIVE",
         "MQTT_CLIENT_ID",
+        "AUTH_JWT_SECRET",
+        "AUTH_JWT_ALGORITHM",
+        "AUTH_ACCESS_TOKEN_MINUTES",
+        "AUTH_REFRESH_TOKEN_DAYS",
+        "AUTH_DEMO_EMAIL",
+        "AUTH_DEMO_PASSWORD",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -94,4 +100,5 @@ def test_production_mqtt_requires_tls() -> None:
             mqtt_enabled=True,
             mqtt_host="broker.example",
             mqtt_client_id="core-1",
+            auth_jwt_secret="test-only-jwt-secret-with-at-least-32-characters",
         )

@@ -17,6 +17,12 @@ EventType = Literal[
     "automation_triggered",
     "automation_completed",
     "automation_failed",
+    "auth_login_succeeded",
+    "auth_login_failed",
+    "auth_refresh_succeeded",
+    "auth_refresh_failed",
+    "auth_logout",
+    "authorization_denied",
 ]
 
 

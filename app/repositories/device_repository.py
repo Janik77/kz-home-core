@@ -31,6 +31,29 @@ class DeviceRepository(Repository[DeviceORM]):
             statement = statement.where(DeviceORM.online == online)
         return list(self.session.scalars(statement).all())
 
+    def filtered_for_houses(
+        self,
+        house_ids: list[str],
+        room_id: str | None,
+        device_type: str | None,
+        online: bool | None,
+    ) -> list[DeviceORM]:
+        if not house_ids:
+            return []
+        statement = (
+            select(DeviceORM)
+            .join(DeviceORM.room)
+            .join(RoomORM.floor)
+            .where(FloorORM.house_id.in_(house_ids))
+        )
+        if room_id is not None:
+            statement = statement.where(DeviceORM.room_id == room_id)
+        if device_type is not None:
+            statement = statement.where(DeviceORM.type == device_type)
+        if online is not None:
+            statement = statement.where(DeviceORM.online == online)
+        return list(self.session.scalars(statement).all())
+
     def house_id(self, device_id: str) -> str:
         statement = (
             select(FloorORM.house_id)
