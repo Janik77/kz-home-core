@@ -22,6 +22,38 @@ from app.services.auth_service import UserService
 from app.seed import main as seed
 from app.transports import FakeMQTTClient
 
+OWNER_EMAIL = "owner@example.test"
+OWNER_PASSWORD = "test owner password"
+
+
+def create_test_owner(settings: Settings, house_id: str | None = None) -> None:
+    engine = create_engine(settings.database_url)
+    try:
+        with Session(engine) as session:
+            user = UserService(UserRepository(session)).create(
+                OWNER_EMAIL, OWNER_PASSWORD
+            )
+            if house_id is not None:
+                MembershipRepository(session).create(
+                    {
+                        "id": "test-owner",
+                        "user_id": user.id,
+                        "house_id": house_id,
+                        "role": "owner",
+                    }
+                )
+    finally:
+        engine.dispose()
+
+
+def authenticate_test_owner(client: TestClient) -> None:
+    login = client.post(
+        "/auth/login",
+        json={"email": OWNER_EMAIL, "password": OWNER_PASSWORD},
+    )
+    assert login.status_code == 200
+    client.headers["Authorization"] = f"Bearer {login.json()['access_token']}"
+
 
 @pytest.fixture
 def db_settings(tmp_path: Path) -> Iterator[Settings]:
@@ -45,47 +77,19 @@ def db_settings(tmp_path: Path) -> Iterator[Settings]:
 
 @pytest.fixture
 def client(db_settings: Settings) -> Iterator[TestClient]:
-    engine = create_engine(db_settings.database_url)
-    try:
-        with Session(engine) as session:
-            UserService(UserRepository(session)).create(
-                "owner@example.test", "test owner password"
-            )
-    finally:
-        engine.dispose()
+    create_test_owner(db_settings)
     with TestClient(create_app(db_settings, run_simulator=False)) as test_client:
-        tokens = test_client.post(
-            "/auth/login",
-            json={"email": "owner@example.test", "password": "test owner password"},
-        ).json()
-        test_client.headers["Authorization"] = f"Bearer {tokens['access_token']}"
+        authenticate_test_owner(test_client)
         yield test_client
 
 
 @pytest.fixture
 def seeded_client(db_settings: Settings) -> Iterator[TestClient]:
     seed(db_settings)
-    engine = create_engine(db_settings.database_url)
-    with Session(engine) as session:
-        user = UserService(UserRepository(session)).create(
-            "owner@example.test", "test owner password"
-        )
-        MembershipRepository(session).create(
-            {
-                "id": "test-owner",
-                "user_id": user.id,
-                "house_id": "home1",
-                "role": "owner",
-            }
-        )
-    engine.dispose()
+    create_test_owner(db_settings, "home1")
     with TestClient(create_app(db_settings, run_simulator=False)) as test_client:
-        tokens = test_client.post(
-            "/auth/login",
-            json={"email": "owner@example.test", "password": "test owner password"},
-        ).json()
-        test_client.headers["Authorization"] = f"Bearer {tokens['access_token']}"
-        test_client.auth_access_token = tokens["access_token"]  # type: ignore[attr-defined]
+        authenticate_test_owner(test_client)
+        test_client.auth_access_token = test_client.headers["Authorization"].split()[1]  # type: ignore[attr-defined]
         yield test_client
 
 
@@ -175,25 +179,28 @@ def test_create_structure_device_and_duplicate_validation(client: TestClient) ->
 
 def test_device_state_persists_and_filters(db_settings: Settings) -> None:
     seed(db_settings)
+    create_test_owner(db_settings, "home1")
     with TestClient(create_app(db_settings, run_simulator=False)) as first_client:
+        authenticate_test_owner(first_client)
         response = first_client.patch(
             "/devices/living_room_light/state", json={"on": True, "brightness": 50}
         )
+        assert response.status_code == 200
         assert response.json()["state"] == {"on": True, "brightness": 50}
 
     # The first app has completed its lifespan and disposed its engine. A fresh
     # app still reads the state from the same temporary database.
     with TestClient(create_app(db_settings, run_simulator=False)) as restarted:
-        assert restarted.get("/devices/living_room_light").json()["state"]["on"] is True
-        assert (
-            len(
-                restarted.get(
-                    "/devices",
-                    params={"room_id": "living_room", "type": "light", "online": True},
-                ).json()
-            )
-            == 1
+        authenticate_test_owner(restarted)
+        persisted = restarted.get("/devices/living_room_light")
+        assert persisted.status_code == 200
+        assert persisted.json()["state"]["on"] is True
+        filtered = restarted.get(
+            "/devices",
+            params={"room_id": "living_room", "type": "light", "online": True},
         )
+        assert filtered.status_code == 200
+        assert len(filtered.json()) == 1
 
 
 def test_scene_execution_and_shortcuts(seeded_client: TestClient) -> None:
