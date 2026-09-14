@@ -14,3 +14,12 @@ class AutomationRepository(Repository[AutomationORM]):
             AutomationORM.enabled.is_(True),
         )
         return list(self.session.scalars(statement).all())
+
+    def for_houses(self, house_ids: list[str]) -> list[AutomationORM]:
+        if not house_ids:
+            return []
+        return list(
+            self.session.scalars(
+                select(AutomationORM).where(AutomationORM.house_id.in_(house_ids))
+            ).all()
+        )

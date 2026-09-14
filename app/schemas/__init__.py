@@ -4,4 +4,7 @@ from app.schemas.auth import (
     TokenRequest as TokenRequest,
     TokenResponse as TokenResponse,
     UserRead as UserRead,
+    MembershipCreate as MembershipCreate,
+    MembershipRead as MembershipRead,
+    MembershipUpdate as MembershipUpdate,
 )

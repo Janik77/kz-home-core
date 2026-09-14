@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Any
 
 from app.core.errors import InvalidReferenceError
@@ -33,6 +35,20 @@ class DeviceService:
         return [
             self._read(item)
             for item in self.repository.filtered(house_id, room_id, device_type, online)
+        ]
+
+    def list_for_houses(
+        self,
+        house_ids: list[str],
+        room_id: str | None = None,
+        device_type: str | None = None,
+        online: bool | None = None,
+    ) -> list[DeviceRead]:
+        return [
+            self._read(item)
+            for item in self.repository.filtered_for_houses(
+                house_ids, room_id, device_type, online
+            )
         ]
 
     def get(self, device_id: str) -> DeviceRead:
@@ -139,9 +155,7 @@ class DeviceService:
         device = self.require_house(house_id, device_id)
         changed = device.online != online
         metadata = {**device.metadata, "last_seen": last_seen.isoformat()}
-        self.repository.update(
-            device_id, {"online": online, "metadata": metadata}
-        )
+        self.repository.update(device_id, {"online": online, "metadata": metadata})
         return changed
 
     def _validate_room(self, room_id: str) -> None:
