@@ -406,9 +406,7 @@ def build_router(
                 house_for(session, "room", room_id),
                 Permission.DEVICE_READ,
             )
-        return DeviceRepository(session).filtered_for_houses(
-            house_ids, room_id, type, online
-        )
+        return device_service(session).list_for_houses(house_ids, room_id, type, online)
 
     @router.get("/devices/{entity_id}", response_model=DeviceRead)
     def get_device(

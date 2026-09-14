@@ -41,82 +41,92 @@ def rbac(tmp_path: Path) -> Iterator[tuple[TestClient, Settings, dict[str, str]]
     engine.dispose()
     seed(settings)
     user_ids: dict[str, str] = {}
-    with Session(create_engine(settings.database_url)) as session:
-        users = UserService(UserRepository(session))
-        memberships = MembershipRepository(session)
-        for role in ("owner", "installer", "technician", "resident"):
-            user = users.create(f"{role}@example.test", PASSWORD)
-            user_ids[role] = user.id
-            memberships.create(
-                {
-                    "id": f"membership-{role}",
-                    "user_id": user.id,
-                    "house_id": "home1",
-                    "role": role,
-                }
-            )
-        foreign = users.create("foreign@example.test", PASSWORD)
-        user_ids["foreign"] = foreign.id
-        session.add_all(
-            [
-                HouseORM(id="hidden-home", name="Hidden"),
-                FloorORM(
-                    id="hidden-floor", house_id="hidden-home", name="Hidden", order=1
-                ),
-                RoomORM(id="hidden-room", floor_id="hidden-floor", name="Hidden"),
-                DeviceORM(
-                    id="hidden-device",
-                    name="Hidden",
-                    room_id="hidden-room",
-                    type="light",
-                    state={"on": False},
-                    capabilities=["on_off"],
-                    metadata_={},
-                    online=True,
-                ),
-                SceneORM(
-                    id="hidden-scene", name="Hidden", house_id="hidden-home", actions=[]
-                ),
-                AutomationORM(
-                    id="hidden-automation",
-                    name="Hidden",
-                    house_id="hidden-home",
-                    enabled=True,
-                    trigger={
-                        "type": "device_state",
-                        "device_id": "hidden-device",
-                        "field": "on",
-                        "operator": "eq",
-                        "value": True,
-                    },
-                    conditions=[],
-                    actions=[
-                        {
+    setup_engine = create_engine(settings.database_url)
+    try:
+        with Session(setup_engine) as session:
+            users = UserService(UserRepository(session))
+            memberships = MembershipRepository(session)
+            for role in ("owner", "installer", "technician", "resident"):
+                user = users.create(f"{role}@example.test", PASSWORD)
+                user_ids[role] = user.id
+                memberships.create(
+                    {
+                        "id": f"membership-{role}",
+                        "user_id": user.id,
+                        "house_id": "home1",
+                        "role": role,
+                    }
+                )
+            foreign = users.create("foreign@example.test", PASSWORD)
+            user_ids["foreign"] = foreign.id
+            session.add_all(
+                [
+                    HouseORM(id="hidden-home", name="Hidden"),
+                    FloorORM(
+                        id="hidden-floor",
+                        house_id="hidden-home",
+                        name="Hidden",
+                        order=1,
+                    ),
+                    RoomORM(id="hidden-room", floor_id="hidden-floor", name="Hidden"),
+                    DeviceORM(
+                        id="hidden-device",
+                        name="Hidden",
+                        room_id="hidden-room",
+                        type="light",
+                        state={"on": False},
+                        capabilities=["on_off"],
+                        metadata_={},
+                        online=True,
+                    ),
+                    SceneORM(
+                        id="hidden-scene",
+                        name="Hidden",
+                        house_id="hidden-home",
+                        actions=[],
+                    ),
+                    AutomationORM(
+                        id="hidden-automation",
+                        name="Hidden",
+                        house_id="hidden-home",
+                        enabled=True,
+                        trigger={
                             "type": "device_state",
                             "device_id": "hidden-device",
-                            "state": {"on": False},
-                        }
-                    ],
-                ),
-                EventLogORM(
-                    id="hidden-event",
-                    house_id="hidden-home",
-                    event_type="device_state_changed",
-                    entity_id="hidden-device",
-                    payload={},
-                    correlation_id="hidden-correlation",
-                ),
-            ]
-        )
-        session.commit()
-        memberships.create(
-            {
-                "id": "membership-foreign",
-                "user_id": foreign.id,
-                "house_id": "hidden-home",
-                "role": "owner",
-            }
-        )
+                            "field": "on",
+                            "operator": "eq",
+                            "value": True,
+                        },
+                        conditions=[],
+                        actions=[
+                            {
+                                "type": "device_state",
+                                "device_id": "hidden-device",
+                                "state": {"on": False},
+                            }
+                        ],
+                    ),
+                    EventLogORM(
+                        id="hidden-event",
+                        house_id="hidden-home",
+                        event_type="device_state_changed",
+                        entity_id="hidden-device",
+                        payload={},
+                        correlation_id="hidden-correlation",
+                    ),
+                ]
+            )
+            session.commit()
+            memberships.create(
+                {
+                    "id": "membership-foreign",
+                    "user_id": foreign.id,
+                    "house_id": "hidden-home",
+                    "role": "owner",
+                }
+            )
+    finally:
+        setup_engine.dispose()
     with TestClient(create_app(settings, run_simulator=False)) as client:
         yield client, settings, user_ids
 
@@ -152,21 +162,31 @@ def test_authentication_house_creation_and_list_isolation(rbac) -> None:
         ).status_code
         == 404
     )
-    with Session(create_engine(settings.database_url)) as session:
-        membership = session.scalar(
-            select(HouseMembershipORM).where(
-                HouseMembershipORM.user_id == user_ids["foreign"],
-                HouseMembershipORM.house_id == "foreign-home",
+    assertion_engine = create_engine(settings.database_url)
+    try:
+        with Session(assertion_engine) as session:
+            membership = session.scalar(
+                select(HouseMembershipORM).where(
+                    HouseMembershipORM.user_id == user_ids["foreign"],
+                    HouseMembershipORM.house_id == "foreign-home",
+                )
             )
-        )
-        assert membership is not None and membership.role == "owner"
-        assert session.get(HouseORM, "foreign-home") is not None
+            assert membership is not None and membership.role == "owner"
+            assert session.get(HouseORM, "foreign-home") is not None
+    finally:
+        assertion_engine.dispose()
 
 
 def test_role_permissions_and_idor(rbac) -> None:
     client, _, _ = rbac
     resident = headers(client, "resident")
     assert client.get("/devices/living_room_light", headers=resident).status_code == 200
+    listed_device = next(
+        item
+        for item in client.get("/devices", headers=resident).json()
+        if item["id"] == "living_room_light"
+    )
+    assert isinstance(listed_device["metadata"], dict)
     assert (
         client.post("/devices/living_room_light/on", headers=resident).status_code
         == 200

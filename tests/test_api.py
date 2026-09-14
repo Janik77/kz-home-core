@@ -45,10 +45,14 @@ def db_settings(tmp_path: Path) -> Iterator[Settings]:
 
 @pytest.fixture
 def client(db_settings: Settings) -> Iterator[TestClient]:
-    with Session(create_engine(db_settings.database_url)) as session:
-        UserService(UserRepository(session)).create(
-            "owner@example.test", "test owner password"
-        )
+    engine = create_engine(db_settings.database_url)
+    try:
+        with Session(engine) as session:
+            UserService(UserRepository(session)).create(
+                "owner@example.test", "test owner password"
+            )
+    finally:
+        engine.dispose()
     with TestClient(create_app(db_settings, run_simulator=False)) as test_client:
         tokens = test_client.post(
             "/auth/login",
@@ -158,12 +162,14 @@ def test_create_structure_device_and_duplicate_validation(client: TestClient) ->
         },
     )
     assert response.status_code == 201
+    assert response.json()["metadata"] == {"protocol": "virtual"}
     assert (
         client.post(
             "/devices",
             json={"id": "bad", "name": "Bad", "room_id": "missing", "type": "light"},
         ).status_code
-        == 422
+        # Missing and foreign parent IDs share the non-disclosing IDOR response.
+        == 404
     )
 
 
