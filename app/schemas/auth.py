@@ -40,3 +40,24 @@ class UserRead(BaseModel):
     is_superuser: bool
     created_at: datetime
     updated_at: datetime
+
+
+HouseRole = Literal["owner", "installer", "technician", "resident"]
+
+
+class MembershipCreate(BaseModel):
+    user_id: str = Field(min_length=1, max_length=36)
+    role: HouseRole
+
+
+class MembershipUpdate(BaseModel):
+    role: HouseRole
+
+
+class MembershipRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    user_id: str
+    house_id: str
+    role: HouseRole
+    created_at: datetime
+    updated_at: datetime

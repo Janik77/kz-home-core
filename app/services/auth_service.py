@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from app.core.errors import ConflictError
+from app.core.errors import ConflictError, InvalidReferenceError
 from app.models import HouseMembershipORM, UserORM
 from app.repositories import (
     MembershipRepository,
@@ -50,6 +50,14 @@ class AuthorizationService:
     ) -> HouseMembershipORM | None:
         return self.memberships.for_house(user_id, house_id)
 
+    def accessible_house_ids(self, user_id: str, permission: Permission) -> list[str]:
+        roles = {
+            role
+            for role, permissions in ROLE_PERMISSIONS.items()
+            if permission in permissions
+        }
+        return self.memberships.house_ids(user_id, roles)
+
     @staticmethod
     def has_permission(
         membership: HouseMembershipORM | None, permission: Permission
@@ -66,6 +74,43 @@ class AuthorizationService:
             raise PermissionError("House permission denied")
         assert membership is not None
         return membership
+
+
+class MembershipService:
+    def __init__(self, memberships: MembershipRepository, users: UserRepository):
+        self.memberships = memberships
+        self.users = users
+
+    def list(self, house_id: str) -> list[HouseMembershipORM]:
+        return self.memberships.for_house_members(house_id)
+
+    def add(self, house_id: str, user_id: str, role: str) -> HouseMembershipORM:
+        if not self.users.exists(user_id):
+            raise InvalidReferenceError("Referenced user does not exist")
+        return self.memberships.create(
+            {"id": str(uuid4()), "house_id": house_id, "user_id": user_id, "role": role}
+        )
+
+    def change(self, house_id: str, user_id: str, role: str) -> HouseMembershipORM:
+        membership = self.memberships.by_user_house(user_id, house_id)
+        self._protect_final_owner(membership, role)
+        return self.memberships.set_role(membership, role)
+
+    def remove(self, house_id: str, user_id: str) -> None:
+        membership = self.memberships.by_user_house(user_id, house_id)
+        self._protect_final_owner(membership, None)
+        self.memberships.delete(membership.id)
+
+    def _protect_final_owner(
+        self, membership: HouseMembershipORM, replacement_role: str | None
+    ) -> None:
+        owners = self.memberships.lock_owners(membership.house_id)
+        if (
+            membership.role == "owner"
+            and replacement_role != "owner"
+            and len(owners) <= 1
+        ):
+            raise ConflictError("The final house owner cannot be removed or downgraded")
 
 
 class AuthenticationService:

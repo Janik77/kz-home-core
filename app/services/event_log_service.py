@@ -64,3 +64,17 @@ class EventLogService:
                 "correlation_id": event.correlation_id,
             }
         )
+
+    def authorization_denied(
+        self, user_id: str, house_id: str, permission: str
+    ) -> None:
+        self.repository.create(
+            {
+                "id": str(uuid4()),
+                "house_id": house_id,
+                "event_type": "authorization_denied",
+                "entity_id": user_id,
+                "payload": {"user_id": user_id, "permission": permission},
+                "correlation_id": str(uuid4()),
+            }
+        )

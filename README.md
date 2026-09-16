@@ -177,6 +177,21 @@ house permissions; installers manage installation devices/scenes/automations;
 technicians manage and diagnose devices; residents read/control devices and
 read/run scenes. Member and house administration remain owner-only.
 
+### Protected Core API (v0.6b)
+
+Except for health, login, and refresh, HTTP operations require an access token.
+The server resolves each resource's real house and checks its membership permission
+before invoking the existing service. List queries are scoped in the database to
+authorized house IDs. Known IDs in another house deliberately return `404`; a user
+who belongs to the house but lacks the required capability receives `403`.
+
+House creators atomically receive an owner membership. Owners can manage members at
+`/houses/{house_id}/members`; the final owner cannot be removed or downgraded.
+Superusers do not bypass house membership in v0.6b. WebSocket clients authenticate
+the `/ws` upgrade with `Authorization: Bearer <access-token>` and receive only
+events whose `house_id` is in their authorized memberships. Proxies must redact
+the Authorization header from logs.
+
 ### Motion → light
 
 ```json

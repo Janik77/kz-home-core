@@ -29,6 +29,54 @@ class MembershipRepository(Repository[HouseMembershipORM]):
             )
         )
 
+    def house_ids(self, user_id: str, permission_roles: set[str]) -> list[str]:
+        statement = select(HouseMembershipORM.house_id).where(
+            HouseMembershipORM.user_id == user_id,
+            HouseMembershipORM.role.in_(permission_roles),
+        )
+        return list(self.session.scalars(statement).all())
+
+    def for_user_houses(self, user_id: str) -> list[HouseMembershipORM]:
+        return list(
+            self.session.scalars(
+                select(HouseMembershipORM).where(HouseMembershipORM.user_id == user_id)
+            ).all()
+        )
+
+    def for_house_members(self, house_id: str) -> list[HouseMembershipORM]:
+        return list(
+            self.session.scalars(
+                select(HouseMembershipORM).where(
+                    HouseMembershipORM.house_id == house_id
+                )
+            ).all()
+        )
+
+    def by_user_house(self, user_id: str, house_id: str) -> HouseMembershipORM:
+        item = self.for_house(user_id, house_id)
+        if item is None:
+            from app.core.errors import EntityNotFoundError
+
+            raise EntityNotFoundError("House membership not found")
+        return item
+
+    def lock_owners(self, house_id: str) -> list[HouseMembershipORM]:
+        """Serialize final-owner mutations on databases that support row locks."""
+        statement = (
+            select(HouseMembershipORM)
+            .where(
+                HouseMembershipORM.house_id == house_id,
+                HouseMembershipORM.role == "owner",
+            )
+            .with_for_update()
+        )
+        return list(self.session.scalars(statement).all())
+
+    def set_role(self, membership: HouseMembershipORM, role: str) -> HouseMembershipORM:
+        membership.role = role
+        self._commit()
+        return membership
+
 
 class RefreshSessionRepository(Repository[RefreshSessionORM]):
     def __init__(self, session: Session) -> None:
