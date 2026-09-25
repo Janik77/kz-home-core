@@ -238,3 +238,19 @@ pip install -r requirements-dev.txt
 pytest
 ruff check app simulator tests
 ```
+
+### Schema verification
+
+The normal pytest suite checks the linear Alembic chain and SQLite migrations
+without a PostgreSQL server. To also test fresh PostgreSQL installation, upgrades,
+and correlation-ID length enforcement, explicitly set `TEST_POSTGRESQL_URL` to a
+dedicated test database using `postgresql+psycopg://...`, then run
+`pytest tests/test_schema.py`. These tests create a unique schema inside a
+transaction and roll it back; the test role needs permission to create schemas.
+They never fall back to `DATABASE_URL`. Without this variable they are skipped.
+
+Revision `0004_event_log_correlation` widens event correlation IDs to 128
+characters. Its downgrade requires an online connection and refuses to proceed
+while IDs longer than 36 characters exist; it never truncates them.
+Application startup still does not apply or verify migrations: run
+`alembic upgrade head` explicitly before starting Core.
