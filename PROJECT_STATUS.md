@@ -140,9 +140,11 @@ generated file changes. No current test-count or deployment-pass claim is made.
 **Already implemented:** configuration guards above; external Alembic migrations;
 PostgreSQL-compatible model types; lifecycle-managed MQTT reconnect; shutdown task
 cancellation and engine disposal; disabled FastAPI debug responses; domain error
-handlers; authentication, RBAC, and scene house preflight.
+handlers; authentication, RBAC, and scene house preflight. `/ready` checks lifespan
+initialization, database access, and exact agreement with the packaged Alembic head;
+failures return 503 with fixed safe reasons. `/health` remains lightweight liveness.
 
-**Remaining before first real deployment:** dependency/schema readiness checks;
+**Remaining before first real deployment:** MQTT/device readiness checks;
 bounded and resilient shutdown; production user bootstrap/recovery; secure broker
 configuration and certificates; HTTPS/reverse proxy and authentication rate limits;
 one supported runtime package; database roles/storage/timeouts; logging and
@@ -155,8 +157,9 @@ automation tasks are process-local. Multi-worker coordination is not implemented
 
 ## 8. Known limitations / technical debt
 
-- `/health` is static liveness; no readiness endpoint or startup database/schema
-  verification. MQTT `connected` is set before subscriptions complete.
+- `/ready` checks database migration history on request, not manual schema drift
+  or MQTT/device availability. No automatic migrations run at startup. MQTT
+  `connected` is set before subscriptions complete.
 - Cleanup has no application-level deadline or independent failure protection.
   Synchronous database work occurs in async paths. Delayed automations are not
   durable, task concurrency is unbounded, and time conditions use host-local time.
@@ -200,7 +203,8 @@ Remote deployment state and firmware behavior are unverified.
 
 Proposed order; these are pending work, not implemented capabilities:
 
-1. [ ] Add readiness for database/schema and MQTT subscription state; retain liveness.
+1. [ ] Extend readiness to MQTT subscription state; database/schema readiness and
+       separate liveness are implemented.
 2. [ ] Bound shutdown and WebSocket sends; ensure cleanup survives individual failures.
 3. [ ] Address real-device freshness/heartbeat, command outcomes, and MQTT loop safety.
 4. [ ] Add local operator user bootstrap/recovery and safe logging/retention procedures.

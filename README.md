@@ -254,3 +254,22 @@ characters. Its downgrade requires an online connection and refuses to proceed
 while IDs longer than 36 characters exist; it never truncates them.
 Application startup still does not apply or verify migrations: run
 `alembic upgrade head` explicitly before starting Core.
+
+### Liveness and readiness
+
+`GET /health` remains a lightweight public liveness check with
+`{"status":"ok","version":"0.6.0b1"}`. It does not query dependencies.
+`GET /ready` is a public, non-cached probe: 200 with `{"status":"ready"}` only
+after application lifespan initialization and a successful database query whose
+Alembic revision matches the single packaged head. Otherwise it returns 503 with
+`status: not_ready` and a safe reason: `application_not_initialized`,
+`database_unavailable`, or `schema_revision_mismatch`.
+
+Readiness borrows the application engine and closes each connection. PostgreSQL
+and SQLite use the same Alembic revision check; ORM `create_all` without migration
+history is not sufficient. Missing, behind, unknown, or multiple database revisions
+are not ready. This checks migration history, not manual schema drift.
+Ship the `alembic/` directory with the application. No migrations, schema repair,
+seeding, or retries run during startup/probes. Run `alembic upgrade head` as an
+explicit deployment step. MQTT connectivity/device readiness is not included in
+this endpoint yet; its startup/reconnect behavior is unchanged.
