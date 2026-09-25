@@ -273,3 +273,64 @@ Ship the `alembic/` directory with the application. No migrations, schema repair
 seeding, or retries run during startup/probes. Run `alembic upgrade head` as an
 explicit deployment step. MQTT connectivity/device readiness is not included in
 this endpoint yet; its startup/reconnect behavior is unchanged.
+
+### Production Core container
+
+The Dockerfile uses the official `python:3.12-slim-bookworm` image, matching the
+Python 3.12 local validation environment. Python 3.12 remains supported; see the
+[Python support schedule](https://devguide.python.org/versions/) and
+[official image tags](https://hub.docker.com/_/python).
+Only runtime requirements and application/simulator/migration files are copied.
+The simulator module is required by imports but remains disabled in production.
+Application files are root-owned; runtime runs as UID/GID 10001 in `/app`.
+
+Build from the repository root with Docker configured for Linux containers:
+
+```sh
+docker build --pull -t kz-home-core:v0.7-local .
+```
+
+Provide configuration through environment variables only. Prepare a protected
+environment file **outside the repository/build context**, using
+`.env.production.example` as the variable reference; replace its placeholders.
+The following `/secure/kzhome.env` is only a path placeholder, not a supplied file.
+Docker `--env-file` injects process variables; Core does not read that file itself.
+Never pass secrets as build arguments or copy them into the image.
+
+Production requires a PostgreSQL URL, a strong JWT signing secret, MQTT enabled,
+MQTT host/client ID, and TLS. Supply broker credentials together and configure
+broker authentication/ACLs externally. PostgreSQL and the broker must be reachable
+from the container: `localhost` refers to the container, not the host.
+Choose the installation timezone explicitly through `TZ` for local-time rules.
+Private broker CAs must be trusted by the container runtime; do not disable TLS
+verification. Certificates, database, broker, and network provisioning are external.
+
+Before starting Core, run migrations explicitly against the intended database
+using the same image and environment. This command validates production settings
+but does not start the API or connect MQTT:
+
+```sh
+docker run --rm --env-file /secure/kzhome.env kz-home-core:v0.7-local python -m alembic upgrade head
+```
+
+Only after migrations succeed, start the single Core process:
+
+```sh
+docker run -d --name kzhome-core --env-file /secure/kzhome.env -p 127.0.0.1:8000:8000 kz-home-core:v0.7-local
+```
+
+This binds host access to loopback; HTTPS/reverse-proxy deployment is separate work.
+Do not scale instances or override the worker count. The exec-form command runs
+Uvicorn directly, without reload, seeding, migration hooks, or a shell wrapper.
+Use `docker stop --time 30 kzhome-core` for a graceful-stop window.
+
+The image healthcheck uses Python's standard library against `/health`; no curl
+or extra package is installed. It reports process liveness, not database readiness,
+and does not automatically restart an unhealthy container. Check `/ready` before
+sending traffic: it requires initialized application, database access, and the
+expected Alembic head. It does not check MQTT/device availability.
+
+This is the Core image foundation only: no Compose, PostgreSQL/Mosquitto
+containers, reverse proxy, certificates, or backup automation are supplied.
+The base tag receives updates and transitive dependencies are not fully locked;
+record the tested image digest for a deployment and rebuild deliberately.

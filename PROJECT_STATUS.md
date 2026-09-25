@@ -147,10 +147,14 @@ failures return 503 with fixed safe reasons. `/health` remains lightweight liven
 **Remaining before first real deployment:** MQTT/device readiness checks;
 bounded and resilient shutdown; production user bootstrap/recovery; secure broker
 configuration and certificates; HTTPS/reverse proxy and authentication rate limits;
-one supported runtime package; database roles/storage/timeouts; logging and
+deployment orchestration; database roles/storage/timeouts; logging and
 retention; backups with restore rehearsal; real PostgreSQL and ESP32 acceptance
 tests. None of these operational procedures is demonstrated by a live deployment
-in this repository. No Docker, Compose, systemd, or reverse-proxy files are present.
+in this repository. A non-root, single-worker Core Dockerfile and `.dockerignore`
+are present; README documents environment injection and explicit migrations.
+Its `/health` healthcheck uses Python's standard library. Compose, database/broker
+containers, systemd, and reverse-proxy files are not present. Container build/runtime
+validation must be checked separately from host pytest results.
 
 Plan for one Core instance/worker: EventBus, WebSockets, MQTT consumption, and
 automation tasks are process-local. Multi-worker coordination is not implemented.
