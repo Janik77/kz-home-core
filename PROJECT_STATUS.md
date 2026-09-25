@@ -152,9 +152,14 @@ retention; backups with restore rehearsal; real PostgreSQL and ESP32 acceptance
 tests. None of these operational procedures is demonstrated by a live deployment
 in this repository. A non-root, single-worker Core Dockerfile and `.dockerignore`
 are present; README documents environment injection and explicit migrations.
-Its `/health` healthcheck uses Python's standard library. Compose, database/broker
-containers, systemd, and reverse-proxy files are not present. Container build/runtime
-validation must be checked separately from host pytest results.
+`compose.production.yaml` adds PostgreSQL 17 and Mosquitto 2 on an internal network,
+with named data volumes and only loopback API port 8000 published. Operator-supplied
+MQTT certificates (SAN `mosquitto`) and password hashes are mounted read-only;
+Core uses `SSL_CERT_FILE` with existing verified TLS. No secrets are supplied.
+PostgreSQL health gates Core startup; migrations and initial database-role setup
+remain explicit. Broker startup is not authenticated MQTT readiness. HTTPS,
+reverse proxy, device network access, and certificate automation remain deferred.
+Container build/runtime validation must be checked separately from host pytest.
 
 Plan for one Core instance/worker: EventBus, WebSockets, MQTT consumption, and
 automation tasks are process-local. Multi-worker coordination is not implemented.

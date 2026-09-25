@@ -37,3 +37,11 @@ requirements-dev.txt
 dist/
 build/
 **/*.egg-info
+deploy/local/
+**/*.pem
+**/*.key
+**/*.crt
+**/*.cer
+**/*.p12
+**/*.pfx
+**/passwords

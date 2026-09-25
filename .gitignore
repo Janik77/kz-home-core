@@ -4,3 +4,14 @@ __pycache__/
 .venv/
 .env
 *.db
+deploy/local/
+.env.*
+!.env.example
+!.env.production.example
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+**/passwords

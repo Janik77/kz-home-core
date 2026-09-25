@@ -330,7 +330,143 @@ and does not automatically restart an unhealthy container. Check `/ready` before
 sending traffic: it requires initialized application, database access, and the
 expected Alembic head. It does not check MQTT/device availability.
 
-This is the Core image foundation only: no Compose, PostgreSQL/Mosquitto
-containers, reverse proxy, certificates, or backup automation are supplied.
+The image can also be used by the Compose foundation below. Reverse proxy,
+certificate issuance, and backup automation remain separate work.
 The base tag receives updates and transitive dependencies are not fully locked;
 record the tested image digest for a deployment and rebuild deliberately.
+
+### Single-server Compose foundation
+
+`compose.production.yaml` runs Core, official PostgreSQL 17, and Eclipse Mosquitto
+2. Use Linux containers and Docker Compose v2 supporting long bind mounts and
+health dependencies. PostgreSQL and MQTT have **no published host ports**; Core
+publishes only `127.0.0.1:8000`. All services share an internal bridge network.
+This stage does not permit external ESP32 connections or public API access.
+
+Prepare `deploy/local/production.env` from `deploy/compose.env.example`. Set a
+separate database administrator password, a non-superuser Core database URL using
+`postgres:5432/kzhome`, a strong JWT secret, and the Core MQTT password. Supply
+literal values (single-quote values containing `$` in the Compose env file), and
+URL-encode database password characters in `DATABASE_URL`. Set `TZ` deliberately.
+These variables are injected only into services that need them. Core's existing
+production/MQTT TLS guards stay enabled. Do not print expanded Compose config with
+real secrets; use `config --quiet`. Protect the env file from other host users.
+
+Supply these files yourself; the repository generates no certificates or keys:
+
+| Host file | Mosquitto read-only mount | Core read-only mount |
+|---|---|---|
+| `deploy/local/mqtt/ca.crt` | `/mosquitto/secrets/ca.crt` | `/run/mqtt/ca.crt` |
+| `deploy/local/mqtt/server.crt` | `/mosquitto/secrets/server.crt` | Not mounted |
+| `deploy/local/mqtt/server.key` | `/mosquitto/secrets/server.key` | Not mounted |
+| `deploy/local/mqtt/passwords` | `/mosquitto/secrets/passwords` | Not mounted |
+
+Certificates must be PEM; `server.crt` includes the server/intermediate chain and
+must have **DNS SAN `mosquitto`**, matching Core's fixed Compose `MQTT_HOST`.
+Supply the matching server private key suitable for unattended broker startup.
+Do not put the CA private key on this server. Core sets the standard OpenSSL
+`SSL_CERT_FILE=/run/mqtt/ca.crt`; its existing `ssl.create_default_context()` loads
+that CA, retains certificate-chain and hostname verification, and connects on
+8883. No insecure verification flags or application TLS changes are used.
+The broker uses TLS 1.2 or newer plus username/password authentication, not mTLS.
+See [Python SSL](https://docs.python.org/3.12/library/ssl.html) and
+[Mosquitto TLS/authentication settings](https://mosquitto.org/man/mosquitto-conf-5.html).
+
+On the Linux deployment host, create the directories and generate the **password
+hash file** interactively, entering the same password as `MQTT_PASSWORD`:
+
+```sh
+mkdir -p deploy/local/mqtt
+docker run --rm -it --user 0:0 --entrypoint mosquitto_passwd -v "$(pwd)/deploy/local/mqtt:/bootstrap" eclipse-mosquitto:2 -c /bootstrap/passwords kzhome-core
+```
+
+Use `-c` only when creating a new password file; omit it for updates. This is a
+bootstrap container, not ordinary broker startup. The checked-in ACL allows this
+Core identity to read inbound v1 topics and publish only commands. Anonymous access
+is disabled. Device accounts and per-device ACLs are deferred until commissioning.
+
+Ensure the broker's `mosquitto` user can read the key and password file, but other
+host users cannot: determine its numeric UID/GID with
+`docker run --rm --entrypoint id eclipse-mosquitto:2 mosquitto`, assign matching
+ownership/group access, and use mode 0640 for private files. Public CA/server
+certificates may be 0644; Core UID 10001 must be able to read its mounted CA.
+Keep the secrets directory protected, with sufficient traversal for the broker.
+Do not solve permission errors with world-readable private keys or passwords.
+All `deploy/local/` contents and common certificate/key extensions are excluded
+from Git and Docker build context. No log volume is needed: broker logs go to
+stdout, with bounded Docker log rotation for all services.
+
+The commands below use a shell helper from the repository root:
+
+```sh
+dc() { docker compose --env-file deploy/local/production.env -f compose.production.yaml "$@"; }
+dc config --quiet
+dc build core
+dc up -d postgres mosquitto
+dc ps
+dc logs --tail 50 mosquitto
+```
+
+Wait for PostgreSQL to report healthy and confirm Mosquitto starts without TLS or
+credential errors. Core depends on PostgreSQL health and broker process startup;
+there is deliberately no claim that process startup proves authenticated MQTT
+readiness. Core's existing reconnect loop handles broker timing. PostgreSQL's
+healthcheck checks server availability, **not migrations**.
+
+On a fresh database volume, provision the application role once using the local
+administrator connection. Do not use the image's bootstrap superuser in Core:
+
+```sh
+dc exec postgres psql -U postgres -d kzhome
+```
+
+Inside psql (enter the application password interactively at `\password`):
+
+```text
+CREATE ROLE kzhome LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE;
+\password kzhome
+ALTER DATABASE kzhome OWNER TO kzhome;
+\q
+```
+
+Set `DATABASE_URL` to this role and password. The role owns this one database and
+can run migrations; splitting runtime and migration privileges is later hardening.
+The official PostgreSQL image's environment initializes only an empty volume;
+changing `POSTGRES_PASSWORD` later is not password rotation. See the
+[official PostgreSQL image documentation](https://hub.docker.com/_/postgres).
+
+Apply migrations explicitly and start Core only after success:
+
+```sh
+dc run --rm --no-deps core python -m alembic upgrade head
+dc up -d core
+curl --fail http://127.0.0.1:8000/health
+curl --fail http://127.0.0.1:8000/ready
+dc logs --tail 50 core
+```
+
+The same complete production settings are needed for migrations, but that command
+does not start MQTT. `/health` and the image healthcheck are liveness only;
+`/ready` checks initialization/database/Alembic head, not broker connectivity.
+Confirm broker authentication/TLS separately from these HTTP probes. To upgrade,
+stop Core, build the intended image, explicitly migrate, and start Core again;
+never run old/new Core instances concurrently against this broker.
+
+```sh
+dc stop core
+dc up -d core
+dc stop
+dc up -d
+```
+
+Use the last command only for an already provisioned and migrated stack. `dc down`
+removes containers/network but retains named volumes `postgres_data` and
+`mosquitto_data` (prefixed by Compose project `kzhome`). Never use `down -v` unless
+intentionally deleting installation state. Retained MQTT data and PostgreSQL data
+survive container recreation; certificates/passwords/env remain operator-managed
+host files. Named volumes are not backups. API files need no persistent volume.
+
+HTTPS, reverse proxy, public exposure, certificate automation, physical-device
+network access, backup/restore automation, and MQTT readiness remain deferred.
+Image tags are major-version pinned, not immutable digests; record tested digests
+for releases. This foundation alone is not a verified production installation.
