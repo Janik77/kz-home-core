@@ -23,6 +23,8 @@ def add_missing(repository, items) -> None:
 
 def main(settings: Settings | None = None) -> None:
     settings = settings or Settings.from_env()
+    if settings.app_env.lower() == "production":
+        raise RuntimeError("Demo seeding is forbidden in production")
     engine = create_db_engine(settings)
     factory = create_session_factory(settings, engine)
     try:

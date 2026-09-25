@@ -3,6 +3,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
+
+
+def _validate_app_env(value: str) -> None:
+    if value.lower() not in {"development", "test", "local", "production"}:
+        raise ValueError("APP_ENV must be development, test, local, or production")
 
 
 @dataclass(frozen=True)
@@ -25,6 +32,7 @@ class Settings:
     auth_refresh_token_days: int = 30
 
     def __post_init__(self) -> None:
+        _validate_app_env(self.app_env)
         if self.auth_jwt_algorithm not in {"HS256", "HS384", "HS512"}:
             raise ValueError("AUTH_JWT_ALGORITHM must be an approved HMAC algorithm")
         if self.auth_access_token_minutes < 1 or self.auth_refresh_token_days < 1:
@@ -35,6 +43,15 @@ class Settings:
             or "change-me" in self.auth_jwt_secret.lower()
         ):
             raise ValueError("Production requires a strong AUTH_JWT_SECRET")
+        if self.app_env.lower() == "production":
+            try:
+                backend = make_url(self.database_url).get_backend_name()
+            except ArgumentError:
+                raise ValueError("Production DATABASE_URL must use PostgreSQL") from None
+            if backend != "postgresql":
+                raise ValueError("Production DATABASE_URL must use PostgreSQL")
+            if not self.mqtt_enabled:
+                raise ValueError("Production device control requires MQTT_ENABLED=true")
         if not self.mqtt_enabled:
             return
         if not self.mqtt_host or not self.mqtt_client_id:
@@ -55,8 +72,10 @@ class Settings:
         # Local files are a development convenience only. Explicit process
         # environment values win because python-dotenv never overrides them.
         app_env = os.getenv("APP_ENV", "development")
+        _validate_app_env(app_env)
         if app_env.lower() in {"development", "test", "local"}:
             load_dotenv(Path.cwd() / ".env", override=False)
+        _validate_app_env(os.getenv("APP_ENV", "development"))
 
         database_url = os.getenv("DATABASE_URL")
         if not database_url:
@@ -64,9 +83,8 @@ class Settings:
         return cls(
             database_url=database_url,
             app_env=os.getenv("APP_ENV", "development"),
-            app_debug=os.getenv("APP_DEBUG", "false").lower() in {"1", "true", "yes"},
-            simulator_enabled=os.getenv("KZHOME_SIMULATOR_ENABLED", "false").lower()
-            in {"1", "true", "yes"},
+            app_debug=_boolean("APP_DEBUG", False),
+            simulator_enabled=_boolean("KZHOME_SIMULATOR_ENABLED", False),
             mqtt_enabled=_boolean("MQTT_ENABLED", False),
             mqtt_host=_optional("MQTT_HOST"),
             mqtt_port=_integer("MQTT_PORT", 1883),
