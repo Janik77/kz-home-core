@@ -340,7 +340,21 @@ record the tested image digest for a deployment and rebuild deliberately.
 `compose.production.yaml` runs Core, official PostgreSQL 17, and Eclipse Mosquitto
 2. Use Linux containers and Docker Compose v2 supporting long bind mounts and
 health dependencies. PostgreSQL and MQTT have **no published host ports**; Core
-publishes only `127.0.0.1:8000`. All services share an internal bridge network.
+publishes only `127.0.0.1:8000`. All services share an internal backend bridge.
+Core alone also joins a non-internal frontend bridge so Docker can activate the
+loopback port publication. This permits Core outbound connectivity; PostgreSQL
+and Mosquitto remain attached only to the internal backend network.
+After changing this topology, recreate only Core (a restart is insufficient):
+
+```powershell
+docker compose --env-file deploy/local/production.env -f compose.production.yaml up -d --no-deps --force-recreate core
+docker compose --env-file deploy/local/production.env -f compose.production.yaml port core 8000
+curl.exe --fail http://127.0.0.1:8000/health
+curl.exe --fail -i http://127.0.0.1:8000/ready
+```
+
+The port command must report `127.0.0.1:8000`. No migrations or data-volume changes
+are required for this network correction.
 This stage does not permit external ESP32 connections or public API access.
 
 Prepare `deploy/local/production.env` from `deploy/compose.env.example`. Set a
@@ -354,12 +368,17 @@ real secrets; use `config --quiet`. Protect the env file from other host users.
 
 Supply these files yourself; the repository generates no certificates or keys:
 
-| Host file | Mosquitto read-only mount | Core read-only mount |
+| Host file | Mosquitto read-only input -> private runtime copy | Core read-only mount |
 |---|---|---|
-| `deploy/local/mqtt/ca.crt` | `/mosquitto/secrets/ca.crt` | `/run/mqtt/ca.crt` |
-| `deploy/local/mqtt/server.crt` | `/mosquitto/secrets/server.crt` | Not mounted |
-| `deploy/local/mqtt/server.key` | `/mosquitto/secrets/server.key` | Not mounted |
-| `deploy/local/mqtt/passwords` | `/mosquitto/secrets/passwords` | Not mounted |
+| `deploy/local/mqtt/ca.crt` | `/bootstrap/ca.crt` -> `/run/mosquitto/ca.crt` | `/run/mqtt/ca.crt` |
+| `deploy/local/mqtt/server.crt` | `/bootstrap/server.crt` -> `/run/mosquitto/server.crt` | Not mounted |
+| `deploy/local/mqtt/server.key` | `/bootstrap/server.key` -> `/run/mosquitto/server.key` | Not mounted |
+| `deploy/local/mqtt/passwords` | `/bootstrap/passwords` -> `/run/mosquitto/passwords` | Not mounted |
+
+The repository ACL is likewise copied from `/bootstrap/acl` to
+`/run/mosquitto/acl`. Only these individual inputs are mounted, never the entire
+local TLS directory. `ca.key`, `server.csr`, `server.ext`, and `ca.srl` are issuance
+material and are **not mounted**. Keep the CA private key offline/protected.
 
 Certificates must be PEM; `server.crt` includes the server/intermediate chain and
 must have **DNS SAN `mosquitto`**, matching Core's fixed Compose `MQTT_HOST`.
@@ -385,16 +404,40 @@ bootstrap container, not ordinary broker startup. The checked-in ACL allows this
 Core identity to read inbound v1 topics and publish only commands. Anonymous access
 is disabled. Device accounts and per-device ACLs are deferred until commissioning.
 
-Ensure the broker's `mosquitto` user can read the key and password file, but other
-host users cannot: determine its numeric UID/GID with
-`docker run --rm --entrypoint id eclipse-mosquitto:2 mosquitto`, assign matching
-ownership/group access, and use mode 0640 for private files. Public CA/server
-certificates may be 0644; Core UID 10001 must be able to read its mounted CA.
-Keep the secrets directory protected, with sufficient traversal for the broker.
-Do not solve permission errors with world-readable private keys or passwords.
+Windows bind mounts do not reliably provide Linux ownership/mode semantics.
+`deploy/mosquitto/start.sh` starts as container root, validates required inputs,
+and copies them with umask 077 into a private 1 MiB tmpfs. It sets every runtime
+file to mode 0600, owned by the image's `mosquitto` user/group, and the directory
+to 0700. It also assigns the data-volume directory to that user. It then execs
+Mosquitto, whose explicit `user mosquitto` configuration drops privileges.
+Missing/unreadable files fail startup; no insecure fallback is used. The script
+has enforced LF line endings for Windows checkouts. Copies disappear on container
+removal and are restaged on each start; no secret volume or baked-in secrets exist.
+
+Protect source private files with Windows ACLs or Linux mode 0600 and appropriate
+host ownership. They must be readable by the container bootstrap root; do not
+make private keys world-readable. Core UID 10001 must still read the public CA
+bind mount (0644 is appropriate for that public certificate). This does not alter
+TLS verification. Rotation requires replacing source files and recreating Mosquitto
+to refresh copies/bind mounts; restart Core as well after changing CA trust.
 All `deploy/local/` contents and common certificate/key extensions are excluded
 from Git and Docker build context. No log volume is needed: broker logs go to
 stdout, with bounded Docker log rotation for all services.
+
+To retry the broker on Windows PowerShell after this permission fix, from the
+repository root (this does not touch PostgreSQL or run migrations):
+
+```powershell
+docker compose --env-file deploy/local/production.env -f compose.production.yaml config --quiet
+docker compose --env-file deploy/local/production.env -f compose.production.yaml up -d --no-deps --force-recreate mosquitto
+docker compose --env-file deploy/local/production.env -f compose.production.yaml logs --tail 50 mosquitto
+docker compose --env-file deploy/local/production.env -f compose.production.yaml exec mosquitto ls -ln /run/mosquitto
+```
+
+Expect private files to show `-rw-------`, owned by the broker UID/GID, and no
+key/ACL/password permission warnings. Do not display their contents. Once the
+broker is stable, start/restart Core using the already documented explicit
+migration workflow. A healthy `/ready` alone does not verify MQTT authentication.
 
 The commands below use a shell helper from the repository root:
 

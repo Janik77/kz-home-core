@@ -36,7 +36,7 @@ services:
         condition: service_healthy
       mosquitto:
         condition: service_started
-    networks: [backend]
+    networks: [frontend, backend]
     logging:
       driver: json-file
       options:
@@ -68,7 +68,18 @@ services:
   mosquitto:
     image: eclipse-mosquitto:2
     restart: unless-stopped
+    # Stage bind-mounted inputs with Linux ownership before Mosquitto drops root.
+    user: "0:0"
+    entrypoint: ["/bin/sh", "/bootstrap/start.sh"]
+    tmpfs:
+      - /run/mosquitto:rw,noexec,nosuid,nodev,size=1m,mode=0700
     volumes:
+      - type: bind
+        source: ./deploy/mosquitto/start.sh
+        target: /bootstrap/start.sh
+        read_only: true
+        bind:
+          create_host_path: false
       - type: bind
         source: ./deploy/mosquitto/mosquitto.conf
         target: /mosquitto/config/mosquitto.conf
@@ -77,13 +88,31 @@ services:
           create_host_path: false
       - type: bind
         source: ./deploy/mosquitto/acl
-        target: /mosquitto/config/acl
+        target: /bootstrap/acl
         read_only: true
         bind:
           create_host_path: false
       - type: bind
-        source: ./deploy/local/mqtt
-        target: /mosquitto/secrets
+        source: ./deploy/local/mqtt/ca.crt
+        target: /bootstrap/ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./deploy/local/mqtt/server.crt
+        target: /bootstrap/server.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./deploy/local/mqtt/server.key
+        target: /bootstrap/server.key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./deploy/local/mqtt/passwords
+        target: /bootstrap/passwords
         read_only: true
         bind:
           create_host_path: false
@@ -96,6 +125,9 @@ services:
         max-file: "3"
 
 networks:
+  # Core needs a non-internal bridge for Docker to activate its loopback publish.
+  frontend:
+    driver: bridge
   backend:
     driver: bridge
     internal: true

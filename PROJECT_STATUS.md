@@ -153,8 +153,14 @@ tests. None of these operational procedures is demonstrated by a live deployment
 in this repository. A non-root, single-worker Core Dockerfile and `.dockerignore`
 are present; README documents environment injection and explicit migrations.
 `compose.production.yaml` adds PostgreSQL 17 and Mosquitto 2 on an internal network,
-with named data volumes and only loopback API port 8000 published. Operator-supplied
-MQTT certificates (SAN `mosquitto`) and password hashes are mounted read-only;
+with named data volumes and only loopback API port 8000 published. Core additionally
+joins a non-internal frontend bridge to activate Docker port publishing and allow
+outbound connectivity; PostgreSQL/Mosquitto stay exclusively on the internal
+backend. Recreate Core to apply this topology; restarting is insufficient. Operator-supplied
+MQTT certificates (SAN `mosquitto`), password hashes, and ACL use individual
+read-only input mounts. A root bootstrap stages broker-owned 0600 copies in
+private tmpfs, then Mosquitto drops to its configured non-root user. CA private
+keys/CSR/issuance files are not mounted. Host inputs still need OS access controls;
 Core uses `SSL_CERT_FILE` with existing verified TLS. No secrets are supplied.
 PostgreSQL health gates Core startup; migrations and initial database-role setup
 remain explicit. Broker startup is not authenticated MQTT readiness. HTTPS,
