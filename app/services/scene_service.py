@@ -28,13 +28,16 @@ class SceneService:
         return SceneRead.model_validate(self.repository.get(scene_id))
 
     def create(self, data: SceneCreate) -> SceneRead:
-        self._house(data.house_id)
+        self._validate(data)
         return SceneRead.model_validate(self.repository.create(data.model_dump()))
 
     def update(self, scene_id: str, data: SceneUpdate) -> SceneRead:
         values = data.model_dump(exclude_unset=True, exclude_none=True)
-        if "house_id" in values:
-            self._house(values["house_id"])
+        current = self.get(scene_id)
+        candidate = SceneCreate.model_validate(
+            {**current.model_dump(exclude={"created_at", "updated_at"}), **values}
+        )
+        self._validate(candidate)
         return SceneRead.model_validate(self.repository.update(scene_id, values))
 
     def delete(self, scene_id: str) -> None:
@@ -42,6 +45,7 @@ class SceneService:
 
     async def run(self, scene_id: str) -> SceneRead:
         scene = self.get(scene_id)
+        self._validate(scene)
         for action in scene.actions:
             await self.devices.update_state(action.device_id, action.state)
         await self.event_bus.publish(
@@ -52,6 +56,11 @@ class SceneService:
         )
         return scene
 
-    def _house(self, house_id: str) -> None:
-        if not self.houses.exists(house_id):
+    def _validate(self, scene: SceneCreate) -> None:
+        if not self.houses.exists(scene.house_id):
             raise InvalidReferenceError("House does not exist")
+        for action in scene.actions:
+            if self.devices.repository.house_id(action.device_id) != scene.house_id:
+                raise InvalidReferenceError(
+                    "Scene cannot access a device in another house"
+                )

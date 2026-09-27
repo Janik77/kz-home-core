@@ -1,0 +1,7 @@
+# Core's server role handles registered houses. Devices receive no access here.
+user kzhome-core
+topic read kzhome/v1/+/+/state
+topic read kzhome/v1/+/+/ack
+topic read kzhome/v1/+/+/telemetry
+topic read kzhome/v1/+/+/status
+topic write kzhome/v1/+/+/set

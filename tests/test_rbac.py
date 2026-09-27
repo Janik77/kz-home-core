@@ -1,6 +1,7 @@
 from collections.abc import Iterator
 import asyncio
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -23,6 +24,7 @@ from app.models import (
 from app.repositories import MembershipRepository, UserRepository
 from app.seed import main as seed
 from app.services.auth_service import UserService
+from app.services.device_service import DeviceService
 from app.events import Event
 from app.websocket import ConnectionManager
 
@@ -338,3 +340,90 @@ def test_websocket_manager_filters_foreign_house_events() -> None:
         assert socket.messages[0]["house_id"] == "home-a"
 
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("operation", ["create", "update"])
+def test_scene_rejects_cross_house_actions(rbac, operation) -> None:
+    client, _, _ = rbac
+    owner = headers(client, "owner")
+    actions = [
+        {"device_id": "living_room_light", "state": {"on": True}},
+        {"device_id": "hidden-device", "state": {"on": True}},
+    ]
+    original = client.get("/scenes/leave_home", headers=owner).json()
+    if operation == "create":
+        response = client.post(
+            "/scenes",
+            json={
+                "id": "cross-house-scene",
+                "name": "Cross house",
+                "house_id": "home1",
+                "actions": actions,
+            },
+            headers=owner,
+        )
+        assert (
+            client.get("/scenes/cross-house-scene", headers=owner).status_code == 404
+        )
+    else:
+        response = client.patch(
+            "/scenes/leave_home", json={"actions": actions}, headers=owner
+        )
+        assert client.get("/scenes/leave_home", headers=owner).json() == original
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Scene cannot access a device in another house"
+
+
+def test_scene_house_update_revalidates_existing_actions(rbac) -> None:
+    client, _, _ = rbac
+    owner = headers(client, "owner")
+    assert client.post(
+        "/houses", json={"id": "second-home", "name": "Second"}, headers=owner
+    ).status_code == 201
+    response = client.patch(
+        "/scenes/leave_home", json={"house_id": "second-home"}, headers=owner
+    )
+    assert response.status_code == 422
+    assert client.get("/scenes/leave_home", headers=owner).json()["house_id"] == "home1"
+
+
+def test_scene_preflights_all_actions_after_device_moves(rbac, monkeypatch) -> None:
+    client, settings, _ = rbac
+    owner = headers(client, "owner")
+    # The first action remains valid; only the second device changes house.
+    assert client.post(
+        "/scenes",
+        json={
+            "id": "moving-device-scene",
+            "name": "Moving device",
+            "house_id": "home1",
+            "actions": [
+                {"device_id": "living_room_light", "state": {"on": True}},
+                {"device_id": "living_room_curtain", "state": {"position": 0}},
+            ],
+        },
+        headers=owner,
+    ).status_code == 201
+    engine = create_engine(settings.database_url)
+    try:
+        with Session(engine) as session:
+            device = session.get(DeviceORM, "living_room_curtain")
+            assert device is not None
+            device.room_id = "hidden-room"
+            session.commit()
+    finally:
+        engine.dispose()
+
+    send_command = AsyncMock()
+    monkeypatch.setattr(DeviceService, "update_state", send_command)
+    response = client.post("/scenes/moving-device-scene/run", headers=owner)
+    assert response.status_code == 422
+    send_command.assert_not_awaited()
+    assert (
+        client.get("/devices/living_room_light", headers=owner).json()["state"]["on"]
+        is False
+    )
+    # Even a name-only update must validate the complete resulting scene.
+    assert client.patch(
+        "/scenes/moving-device-scene", json={"name": "Renamed"}, headers=owner
+    ).status_code == 422

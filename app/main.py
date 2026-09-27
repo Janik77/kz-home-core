@@ -32,6 +32,7 @@ from app.services.auth_service import (
 from app.services.automation_service import AutomationService
 from app.services.device_service import DeviceService
 from app.services.event_log_service import EventLogService
+from app.services.readiness_service import ReadinessService
 from app.transports import AiomqttClient, MQTTClient, MQTTGateway, Transport
 from app.websocket import ConnectionManager
 from simulator.virtual_device import VirtualDeviceSimulator, stop_simulator
@@ -49,6 +50,7 @@ def create_app(
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     engine = create_db_engine(settings)
+    readiness = ReadinessService(engine)
     session_factory = create_session_factory(settings, engine)
     get_session = session_dependency(session_factory)
     event_bus = EventBus()
@@ -150,7 +152,7 @@ def create_app(
     event_bus.subscribe(connections.handle_event)
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI):
+    async def lifespan(app: FastAPI):
         task: asyncio.Task[None] | None = None
         simulator_requested = (
             settings.simulator_enabled if run_simulator is None else run_simulator
@@ -171,8 +173,10 @@ def create_app(
         if gateway is not None:
             gateway.start()
         try:
+            app.state.initialized = True
             yield
         finally:
+            app.state.initialized = False
             if gateway is not None:
                 await gateway.stop()
             if task is not None:
@@ -189,10 +193,23 @@ def create_app(
         title="KZ Home Core", version=VERSION, debug=False, lifespan=lifespan
     )
     application.state.settings = settings
+    application.state.initialized = False
     application.state.mqtt_gateway = gateway
     application.include_router(
         build_router(get_session, event_bus, command_transport, settings)
     )
+
+    @application.get("/ready")
+    def ready() -> JSONResponse:
+        reason = readiness.check(application.state.initialized)
+        return JSONResponse(
+            status_code=503 if reason else 200,
+            content=(
+                {"status": "not_ready", "reason": reason}
+                if reason else {"status": "ready"}
+            ),
+            headers={"Cache-Control": "no-store"},
+        )
 
     @application.exception_handler(EntityNotFoundError)
     async def not_found_handler(_, error: EntityNotFoundError) -> JSONResponse:

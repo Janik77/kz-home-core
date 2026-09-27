@@ -1,0 +1,137 @@
+name: kzhome
+
+services:
+  core:
+    build: .
+    image: kz-home-core:v0.7-local
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+      KZHOME_SIMULATOR_ENABLED: "false"
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL for the non-superuser role at postgres:5432}
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?Set AUTH_JWT_SECRET}
+      MQTT_ENABLED: "true"
+      MQTT_HOST: mosquitto
+      MQTT_PORT: "8883"
+      MQTT_TLS_ENABLED: "true"
+      MQTT_CLIENT_ID: ${MQTT_CLIENT_ID:-kzhome-core-1}
+      MQTT_KEEPALIVE: "60"
+      MQTT_USERNAME: kzhome-core
+      MQTT_PASSWORD: ${MQTT_PASSWORD:?Set the kzhome-core broker password}
+      SSL_CERT_FILE: /run/mqtt/ca.crt
+      TZ: ${TZ:-UTC}
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - type: bind
+        source: ./deploy/local/mqtt/ca.crt
+        target: /run/mqtt/ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+    networks: [frontend, backend]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  postgres:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: kzhome
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a separate PostgreSQL administrator password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d kzhome"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks: [backend]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    # Stage bind-mounted inputs with Linux ownership before Mosquitto drops root.
+    user: "0:0"
+    entrypoint: ["/bin/sh", "/bootstrap/start.sh"]
+    tmpfs:
+      - /run/mosquitto:rw,noexec,nosuid,nodev,size=1m,mode=0700
+    volumes:
+      - type: bind
+        source: ./deploy/mosquitto/start.sh
+        target: /bootstrap/start.sh
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./deploy/mosquitto/mosquitto.conf
+        target: /mosquitto/config/mosquitto.conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./deploy/mosquitto/acl
+        target: /bootstrap/acl
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./deploy/local/mqtt/ca.crt
+        target: /bootstrap/ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./deploy/local/mqtt/server.crt
+        target: /bootstrap/server.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./deploy/local/mqtt/server.key
+        target: /bootstrap/server.key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./deploy/local/mqtt/passwords
+        target: /bootstrap/passwords
+        read_only: true
+        bind:
+          create_host_path: false
+      - mosquitto_data:/mosquitto/data
+    networks: [backend]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  # Core needs a non-internal bridge for Docker to activate its loopback publish.
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+    internal: true
+
+volumes:
+  postgres_data:
+  mosquitto_data:
