@@ -5,3 +5,16 @@ topic read kzhome/v1/+/+/ack
 topic read kzhome/v1/+/+/telemetry
 topic read kzhome/v1/+/+/status
 topic write kzhome/v1/+/+/set
+
+# Optional commissioning identity; no access until an operator creates its password.
+# Register these exact house/device IDs in Core, or change all device paths together.
+user relay-simulator
+topic read kzhome/v1/e2e_house/e2e_relay/set
+topic write kzhome/v1/e2e_house/e2e_relay/state
+topic write kzhome/v1/e2e_house/e2e_relay/ack
+topic write kzhome/v1/e2e_house/e2e_relay/status
+
+# Optional motion probe: publish-only, no relay access or subscriptions.
+user motion-simulator
+topic write kzhome/v1/e2e_house/e2e_motion/state
+topic write kzhome/v1/e2e_house/e2e_motion/status

@@ -79,8 +79,12 @@ Production configuration guards in `app/core/settings.py` enforce:
 Production suppresses the simulator and refuses demo seeding before database
 access. `.env.production.example` documents required configuration without real
 secrets. MQTT credentials must be paired if supplied; configuration does not itself
-require broker authentication. EventLog redaction is key-based, not a guarantee
-that arbitrary strings or exception traces are secret-free.
+require broker authentication. Production Compose supplies the required Core
+credentials and Mosquitto disables anonymous access. The two E2E identities have
+exact directional device ACLs: relay reads its own set and writes state/ACK/status;
+motion writes only its own state/status and has no subscriptions. EventLog
+redaction is key-based, not a guarantee that arbitrary strings or exception
+traces are secret-free.
 
 ## 5. Database and migrations
 
@@ -119,8 +123,11 @@ executes migrations for fresh installation, upgrade, downgrade, and re-upgrade.
 PostgreSQL tests are opt-in via `TEST_POSTGRESQL_URL` pointing to a dedicated test
 database. They create a random schema in a transaction and roll it back, test
 128-character storage and rejection of 129 characters, and never fall back to
-`DATABASE_URL`. Without explicit configuration they skip. Real PostgreSQL results
-are pending; tests existing in source do not establish that they have passed there.
+`DATABASE_URL`. Without explicit configuration they skip. The optional PostgreSQL
+migration/length-enforcement tests remain unverified in this audit. Separately,
+live operator E2E acceptance has verified PostgreSQL-backed state and event
+persistence on the production Compose stack; that does not prove every migration
+or restore path.
 
 Validation commands used by the project:
 
@@ -132,8 +139,18 @@ git diff --check
 python -m alembic heads
 ```
 
-This documentation-only snapshot did not rerun tests or compilation, avoiding
-generated file changes. No current test-count or deployment-pass claim is made.
+Final audit results (2026-09-30): focused MQTT/simulator/E2E/bootstrap/logging
+checks **74 passed**; full normal suite **156 passed, 2 skipped**, with one
+Starlette/AnyIO deprecation warning. Both skips are optional PostgreSQL migration
+tests. Ruff, compileall and `git diff --check` passed; Alembic reports the sole
+head `0004_event_log_correlation`. Pytest ran with its cache provider disabled
+because the workspace cache is inaccessible; no tests were excluded by that flag.
+Normal pytest uses offline transport/SQLite; neither broker-backed acceptance
+runner nor E2E bootstrap is invoked by application startup or test collection.
+Live evidence below is operator-reported; this audit does not access Docker.
+The audit fixed bootstrap's echoed-password fallback and strengthened rollback,
+unchanged-password and exact ACL regression checks. Both passing E2E runners
+and simulator runtime implementations were left unchanged during the final audit.
 
 ## 7. Production/deployment readiness
 
@@ -144,14 +161,16 @@ handlers; authentication, RBAC, and scene house preflight. `/ready` checks lifes
 initialization, database access, and exact agreement with the packaged Alembic head;
 failures return 503 with fixed safe reasons. `/health` remains lightweight liveness.
 
-**Remaining before first real deployment:** MQTT/device readiness checks;
-bounded and resilient shutdown; production user bootstrap/recovery; secure broker
-configuration and certificates; HTTPS/reverse proxy and authentication rate limits;
-deployment orchestration; database roles/storage/timeouts; logging and
-retention; backups with restore rehearsal; real PostgreSQL and ESP32 acceptance
-tests. None of these operational procedures is demonstrated by a live deployment
-in this repository. A non-root, single-worker Core Dockerfile and `.dockerignore`
-are present; README documents environment injection and explicit migrations.
+**Operator-verified v0.8 scope:** broker TLS/authenticated connectivity, reconnect
+and subscription restoration after broker restart, and both relay and automation
+round trips with persisted ACK/state history (details in §9).
+
+**Still deferred:** MQTT/device readiness checks; bounded and resilient shutdown;
+general production user recovery; HTTPS/reverse proxy and authentication rate
+limits; DB timeouts; broad secret-safe logging/retention; backups with restore
+rehearsal; dedicated PostgreSQL migration tests and physical ESP32 acceptance.
+A non-root, single-worker Core Dockerfile and `.dockerignore` are present; README
+documents environment injection and explicit migrations.
 `compose.production.yaml` adds PostgreSQL 17 and Mosquitto 2 on an internal network,
 with named data volumes and only loopback API port 8000 published. Core additionally
 joins a non-internal frontend bridge to activate Docker port publishing and allow
@@ -174,8 +193,14 @@ automation tasks are process-local. Multi-worker coordination is not implemented
 
 - `/ready` checks database migration history on request, not manual schema drift
   or MQTT/device availability. No automatic migrations run at startup. MQTT
-  `connected` is set before subscriptions complete.
-- Cleanup has no application-level deadline or independent failure protection.
+  `connected` is set only after all inbound subscriptions complete. MQTT retries
+  use 1–30 second exponential backoff, reset on inbound traffic; already reported
+  broker disconnect errors are not logged again during adapter cleanup.
+- Core cleanup has no application-level deadline or independent failure protection.
+  Cancellation during aiomqtt connection waits for entry to settle before closing
+  a late connection; DNS/executor/socket behavior can delay shutdown. E2E coroutine
+  phases and I/O have timeouts, but these are not a hard process-exit guarantee
+  during OS-level I/O stalls or cleanup. No new retry/queue subsystem is present.
   Synchronous database work occurs in async paths. Delayed automations are not
   durable, task concurrency is unbounded, and time conditions use host-local time.
 - MQTT retained flags/state timestamps are not used for freshness decisions;
@@ -190,10 +215,15 @@ automation tasks are process-local. Multi-worker coordination is not implemented
   checked at handshake, while active-user/membership checks occur for events.
 - Refresh revocation and replacement issuance use separate commits. EventLog and
   refresh-session cleanup policies are absent; telemetry is persisted per message.
-- No production user-creation CLI/public registration exists. Runtime bootstrapping
-  must not substitute demo data or weaken owner/membership boundaries.
-- README's version heading, architecture's older v0.6b wording, and protocol §19
-  contain historical descriptions. Runtime version remains `0.6.0b1`.
+- `app.bootstrap_e2e` explicitly provisions dedicated E2E ownership/records using
+  existing services and hashing. It reuses compatible records without resetting
+  passwords/state, rejects conflicts and rolls back the whole transaction. It
+  requires hidden terminal password input and is never called at startup. General
+  production user recovery/public registration remains absent. Block 2 instead
+  provisions through separate RBAC-protected API transactions; a partial failure
+  may leave compatible records for a safe rerun, not a single atomic rollback.
+- Runtime version remains `0.6.0b1` and the Compose Core image label `v0.7-local`;
+  v0.8 is the current development milestone, not a retagged/deployed image claim.
 - Legacy `app/automation.py`, `app/models.py`, and `StructureService` are not the
   active application path. Avoid confusing them with current service/package code.
 - Frontend, AI control, OTA/provisioning platform, BLE Mesh, Zigbee, and Matter are
@@ -201,18 +231,24 @@ automation tasks are process-local. Multi-worker coordination is not implemented
 
 ## 9. Current development milestone
 
-v0.7 production/deployment preparation is in progress, not deployment-complete.
-Snapshot branch: `feature/production-deployment-v0.7`; inspected HEAD: `c98cd88`.
-Working tree was clean before this status document was created.
+v0.8 broker-backed device/automation acceptance is complete at the simulator level,
+with final release audit on `feature/device-e2e-v0.8`. The v0.8 work remains
+uncommitted; the branch has no commits ahead of local `main` at audit time.
 
-Completed work visible in branch history:
+The operator reports these live checks passed on the production Compose stack:
 
-- `6cae771`: scene device house isolation and regression tests.
-- `7fcac56`: production configuration guards and configuration examples.
-- `c98cd88`: PostgreSQL correlation-ID schema correction and migration verification.
+- Verified broker TLS and username/password authentication.
+- Core reconnect and inbound subscription restoration after Mosquitto restart.
+- Persisted relay=false -> HTTP ON -> Core MQTT -> standalone relay -> matching
+  ACK/state -> persisted true -> HTTP OFF -> matching ACK/state -> persisted false.
+- Fresh MQTT motion=true -> Core `report_state` -> existing AutomationService ->
+  MQTT relay set -> simulator apply -> correlated ACK/state -> persisted relay=true.
 
-The branch builds on merged v0.6b house-scoped RBAC and v0.6a authentication.
-Remote deployment state and firmware behavior are unverified.
+The two opt-in runners use existing Protocol v1 and public APIs; no command
+tracking, retries, queue, new automation engine or production seeding was added.
+See [operator procedures and evidence requirements](simulator/E2E_ACCEPTANCE.md).
+No physical ESP32/hardware, firmware compatibility or general production-readiness
+claim follows from these simulator results.
 
 ## 10. Next planned steps
 
@@ -222,9 +258,11 @@ Proposed order; these are pending work, not implemented capabilities:
        separate liveness are implemented.
 2. [ ] Bound shutdown and WebSocket sends; ensure cleanup survives individual failures.
 3. [ ] Address real-device freshness/heartbeat, command outcomes, and MQTT loop safety.
-4. [ ] Add local operator user bootstrap/recovery and safe logging/retention procedures.
-5. [ ] Define a single-worker deployment with secure broker, HTTPS, secrets, and storage.
-6. [ ] Run PostgreSQL integration tests, backup/restore rehearsal, and real ESP32
+4. [ ] Add general operator user recovery and broad safe logging/retention procedures;
+       dedicated E2E bootstrap and application INFO logging are implemented.
+5. [ ] Complete HTTPS, secret rotation and operational storage procedures around the
+       existing single-worker Compose deployment and verified secure broker.
+6. [ ] Run dedicated PostgreSQL migration tests, backup/restore rehearsal, and real ESP32
        commissioning/reconnect tests before declaring the first installation ready.
 
 ## 11. Repository workflow rules
@@ -250,5 +288,5 @@ Recheck relevant implementation and tests; this snapshot may become stale. Prese
 existing work, service boundaries, house isolation, and separate human/device
 identities. Do not treat protocol requirements or planned steps as implemented.
 
-Last updated: 2026-09-25
-Current milestone: v0.7 production/deployment preparation
+Last updated: 2026-09-30
+Current milestone: v0.8 final audit/release preparation; no v0.9 work started

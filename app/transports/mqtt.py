@@ -62,6 +62,8 @@ class MQTTGateway:
         self.sleep = sleep
         self.initial_backoff = initial_backoff
         self.maximum_backoff = maximum_backoff
+        if not 0 < initial_backoff <= maximum_backoff:
+            raise ValueError("MQTT backoff must be positive and bounded")
         self._task: asyncio.Task[None] | None = None
         self._stopping = False
         self.connected = False
@@ -85,12 +87,13 @@ class MQTTGateway:
         while not self._stopping:
             try:
                 await self.client.connect()
-                self.connected = True
-                backoff = self.initial_backoff
                 for topic, qos in subscription_topics():
                     await self.client.subscribe(topic, qos)
+                self.connected = True
+                logger.info("MQTT connected; inbound subscriptions restored")
                 await self.event_bus.publish(Event(type="mqtt_connected", data={}))
                 async for message in self.client.messages():
+                    backoff = self.initial_backoff
                     try:
                         await self.handle_message(message)
                     except Exception as error:

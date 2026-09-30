@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from app.api import build_router
 from app.core import Settings
+from app.core.logging import configure_logging
 from app.core.errors import ConflictError, EntityNotFoundError, InvalidReferenceError
 from app.db import create_db_engine, create_session_factory, session_dependency
 from app.events import Event, EventBus
@@ -48,6 +49,7 @@ def create_app(
     mqtt_client: MQTTClient | None = None,
     mqtt_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> FastAPI:
+    configure_logging()
     settings = settings or Settings.from_env()
     engine = create_db_engine(settings)
     readiness = ReadinessService(engine)

@@ -1,4 +1,17 @@
-# KZ Home Core v0.5
+# KZ Home Core — v0.8 broker-backed acceptance
+
+v0.8 operator acceptance has passed on the production Compose stack: authenticated
+MQTT over verified TLS; Core reconnect and subscription restoration after a
+Mosquitto restart; HTTP ON/OFF -> MQTT relay -> matching ACK/state -> PostgreSQL
+persistence; and MQTT motion -> existing AutomationService -> MQTT relay ->
+correlated ACK/state -> persistence. These are operator-reported live results,
+not physical ESP32/hardware verification or complete protocol conformance.
+
+Both acceptance runners are opt-in and separate from production startup and normal
+pytest. See [operator procedures](simulator/E2E_ACCEPTANCE.md) and
+[current status/limitations](PROJECT_STATUS.md). The runtime API version remains
+`0.6.0b1`; the Compose Core image label remains `v0.7-local`. These historical labels
+were not retagged or deployed during v0.8 acceptance work.
 
 KZ Home Core — компактное ядро умного дома на FastAPI, Pydantic и SQLAlchemy 2.
 PostgreSQL хранит структуру дома, устройства, сцены и автоматизации; EventBus,
@@ -14,8 +27,8 @@ HTTP / WebSocket → FastAPI API → Services → Repositories → SQLAlchemy �
                          Virtual / MQTT transports
 ```
 
-API не обращается к SQLAlchemy напрямую. Routes вызывают services, services —
-repositories. Состояние, capabilities, metadata и правила хранятся в PostgreSQL
+Routes проверяют аутентификацию и права дома; используют repositories для scoped
+reads и services для бизнес-операций. Состояние, capabilities, metadata и правила хранятся в PostgreSQL
 JSONB. Для локальных тестов используется отдельная SQLite database.
 
 ## Установка и конфигурация
@@ -145,9 +158,8 @@ Python-код, shell-команды, `eval` или `exec`. Подробност�
 Human identities are stored as normalized users with Argon2id password hashes.
 A user receives house-scoped authority through one membership (`owner`,
 `installer`, `technician`, or `resident`) per house. Permissions are defined in a
-single role matrix. This release secures the new authentication endpoints; broad
-RBAC enforcement on the existing house/device/scene APIs is intentionally deferred
-to v0.6b.
+single role matrix. Authentication was introduced in v0.6a; the existing
+house/device/scene APIs now enforce house-scoped RBAC as described below.
 
 Set `AUTH_JWT_SECRET` to a unique random value of at least 32 characters in
 production. `AUTH_JWT_ALGORITHM` defaults to `HS256`, access lifetime to 15
@@ -179,7 +191,8 @@ read/run scenes. Member and house administration remain owner-only.
 
 ### Protected Core API (v0.6b)
 
-Except for health, login, and refresh, HTTP operations require an access token.
+Domain HTTP operations require an access token. Health/readiness, login/refresh,
+and the default API documentation endpoints are public.
 The server resolves each resource's real house and checks its membership permission
 before invoking the existing service. List queries are scoped in the database to
 authorized house IDs. Known IDs in another house deliberately return `404`; a user
@@ -337,6 +350,13 @@ record the tested image digest for a deployment and rebuild deliberately.
 
 ### Single-server Compose foundation
 
+For the separate v0.8 relay and motion automation acceptance processes, see
+[E2E acceptance](simulator/E2E_ACCEPTANCE.md) and
+[standalone simulators](simulator/README.md). They use verified TLS and dedicated
+device ACLs on the existing private backend network; they do not enable Core's
+in-process demo simulator. Bootstrap is explicit, atomic and limited to dedicated
+E2E records; it is not a general production user-recovery tool.
+
 `compose.production.yaml` runs Core, official PostgreSQL 17, and Eclipse Mosquitto
 2. Use Linux containers and Docker Compose v2 supporting long bind mounts and
 health dependencies. PostgreSQL and MQTT have **no published host ports**; Core
@@ -453,8 +473,19 @@ dc logs --tail 50 mosquitto
 Wait for PostgreSQL to report healthy and confirm Mosquitto starts without TLS or
 credential errors. Core depends on PostgreSQL health and broker process startup;
 there is deliberately no claim that process startup proves authenticated MQTT
-readiness. Core's existing reconnect loop handles broker timing. PostgreSQL's
+readiness. Core reconnects with exponential backoff from 1 to 30 seconds and
+restores all four inbound subscriptions on each connection. Backoff resets after
+inbound traffic, so repeated immediate disconnects or subscription failures also
+back off. `MQTT connected; inbound subscriptions restored` confirms subscription
+setup, not device availability. An already reported broker disconnect is not
+reported again as a cleanup failure. Shutdown cancels backoff; an in-flight
+connection attempt is allowed to settle so a late connection can be closed.
+Its duration still depends on the MQTT library/socket timeouts. PostgreSQL's
 healthcheck checks server availability, **not migrations**.
+
+Application INFO logs are configured on stderr when no application/root logging
+handler has been supplied; Uvicorn's default server logging alone does not enable
+application INFO logs. Operator-provided logging configuration takes precedence.
 
 On a fresh database volume, provision the application role once using the local
 administrator connection. Do not use the image's bootstrap superuser in Core:
@@ -512,4 +543,5 @@ host files. Named volumes are not backups. API files need no persistent volume.
 HTTPS, reverse proxy, public exposure, certificate automation, physical-device
 network access, backup/restore automation, and MQTT readiness remain deferred.
 Image tags are major-version pinned, not immutable digests; record tested digests
-for releases. This foundation alone is not a verified production installation.
+for releases. The operator-verified v0.8 paths above do not establish general
+production readiness, backup recoverability or physical-device compatibility.
