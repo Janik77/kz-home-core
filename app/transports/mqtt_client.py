@@ -50,17 +50,49 @@ class AiomqttClient:
             "tls_context": ssl.create_default_context() if tls_enabled else None,
         }
         self._client: Any | None = None
+        self._stream_failed = False
 
     async def connect(self) -> None:
         import aiomqtt
 
-        self._client = aiomqtt.Client(**self._options)
-        await self._client.__aenter__()
+        if self._client is not None:
+            raise RuntimeError("MQTT client is already connected")
+        client = aiomqtt.Client(**self._options)
+        # A failed __aenter__ must not be followed by __aexit__ as though it
+        # owned an established connection. aiomqtt handles failed entry itself.
+        # aiomqtt connects through an executor thread. Cancelling its await does
+        # not stop that thread; settle entry before releasing a late connection.
+        entry = asyncio.create_task(client.__aenter__())
+        try:
+            await asyncio.shield(entry)
+        except asyncio.CancelledError:
+            try:
+                await entry
+            except Exception:
+                pass  # Preserve shutdown cancellation, not a late connect error.
+            else:
+                try:
+                    await client.__aexit__(None, None, None)
+                except aiomqtt.MqttError:
+                    pass  # Connection may have disappeared during shutdown.
+            raise
+        self._client = client
+        self._stream_failed = False
 
     async def disconnect(self) -> None:
+        import aiomqtt
+
         client, self._client = self._client, None
         if client is not None:
-            await client.__aexit__(None, None, None)
+            try:
+                await client.__aexit__(None, None, None)
+            except aiomqtt.MqttError:
+                # aiomqtt re-raises the broker disconnect during context exit.
+                # The gateway already received this failure from messages().
+                if not self._stream_failed:
+                    raise
+            finally:
+                self._stream_failed = False
 
     async def subscribe(self, topic: str, qos: int) -> None:
         if self._client is None:
@@ -75,14 +107,21 @@ class AiomqttClient:
         await self._client.publish(topic, payload, qos=qos, retain=retain)
 
     async def messages(self) -> AsyncIterator[MQTTMessage]:
+        import aiomqtt
+
         if self._client is None:
             raise ConnectionError("MQTT client is disconnected")
-        async for message in self._client.messages:
-            yield MQTTMessage(
-                topic=str(message.topic),
-                payload=bytes(message.payload),
-                retained=message.retain,
-            )
+        client = self._client
+        try:
+            async for message in client.messages:
+                yield MQTTMessage(
+                    topic=str(message.topic),
+                    payload=bytes(message.payload),
+                    retained=message.retain,
+                )
+        except aiomqtt.MqttError:
+            self._stream_failed = True
+            raise
 
 
 class FakeMQTTClient:

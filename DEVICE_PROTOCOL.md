@@ -4,12 +4,14 @@
 
 This document freezes the logical contract between KZ Home Core and physical
 devices for protocol version **v1**. The contract is transport-independent:
-MQTT is the first proposed adapter, while BLE Mesh, Zigbee, Matter, and future
+MQTT is the first implemented adapter, while BLE Mesh, Zigbee, Matter, and future
 transports must map to the same normalized device concepts rather than leaking
 transport-specific addresses or messages into Core.
 
 This is an implementation contract, not a runtime implementation. The keywords
 **MUST**, **MUST NOT**, **SHOULD**, and **MAY** express requirements.
+Current implementation coverage and remaining gaps are recorded in §19; the
+requirements below must not be mistaken for claims of full runtime conformance.
 
 The normalized model consists of:
 
@@ -23,7 +25,7 @@ The normalized model consists of:
 ## 2. Versioning and compatibility
 
 Every device identifies its `protocol_version`; this document defines the exact
-string `v1`. The proposed MQTT namespace is:
+string `v1`. The MQTT namespace is:
 
 ```text
 kzhome/v1/{house_id}/{device_id}/...
@@ -222,8 +224,8 @@ be configured so devices can publish only their own `state`, `ack`, `telemetry`,
 and `status`, and subscribe only to their own `set` topic. Core access is scoped
 by its server role and still checked against house ownership.
 
-The v1 MQTT mapping above differs from the current placeholder MQTTTransport;
-see §19. No runtime behavior is changed by this document.
+The current MQTTGateway implements this topic mapping; see §19 for remaining
+runtime gaps. No wire semantics are changed by this documentation update.
 
 ## 8. Acknowledgements
 
@@ -548,33 +550,43 @@ bytes) are defined by its trusted telemetry schema, not inferred from values.
 
 ## 19. Compatibility with the current code
 
-The existing `MQTTTransport` is explicitly a placeholder and already isolates
-an MQTT client behind the transport layer, which is directionally compatible
-with this design. It is not wire-compatible with the frozen v1 mapping:
+`MQTTGateway` is the active adapter; `MQTTTransport` is a compatibility alias.
+It uses the `kzhome/v1` namespace, command IDs/correlation/timestamps, envelope
+validation, bounded payloads/JSON depth, topic-house/device registry checks and
+explicit QoS/retention policy. ACKs, state, status and telemetry have separate
+routes. Commands do not directly overwrite observed state. Core reconnects and
+restores all inbound subscriptions through the lifecycle-managed aiomqtt adapter.
 
-- it uses `kzhome/{house_id}/{device_id}/...` without the `v1` segment;
-- it sends a bare state object on `set`, without `command_id`,
-  `correlation_id`, or `timestamp`;
-- it sends and accepts a bare object on `state`, rather than the event envelope;
-- it has no ACK, telemetry, status, heartbeat, or LWT behavior;
-- its client publish interface cannot express QoS or retained policy; and
-- inbound filtering validates topic shape only minimally and has no protocol
-  limits or transport identity/house authorization context.
+v0.8 live operator acceptance on production Compose has verified authenticated
+broker TLS connectivity, Core reconnect/subscription restoration after Mosquitto
+restart, HTTP ON/OFF -> relay MQTT command -> matching ACK/state -> PostgreSQL
+persistence, and MQTT motion -> existing AutomationService -> relay MQTT command
+-> correlated ACK/state -> persistence. See [acceptance](simulator/E2E_ACCEPTANCE.md).
+These results use software simulators, not physical ESP32/hardware.
 
-Those differences are expected future adapter work, not silent changes to the
-current runtime. Implementing v1 MUST update the adapter behind the normalized
-transport interface and add compatibility/migration tests deliberately; this
-architecture-only change does neither.
+The runtime does not yet implement every normative requirement above:
 
-## 20. Non-goals for this change
+- Capabilities are existing named strings with field validators, not the full
+  declarative descriptor map. Sensor numeric validation is incomplete.
+- DeviceService discards returned command IDs. Core records ACKs but does not
+  track pending commands, classify unknown IDs, enforce outcome progression,
+  retry commands or maintain durable deduplication. HTTP command responses expose
+  neither command ID nor correlation ID. Acceptance matches observed MQTT IDs.
+- State timestamps/retained flags do not enforce freshness; heartbeat expiry,
+  independent receipt-time availability and telemetry rate limiting are absent.
+- Core validates the registered topic-house/device association, but it does not
+  receive broker publisher identity. Authenticated, directional broker ACLs enforce
+  the principal-to-topic boundary. Human APIs separately enforce house RBAC.
+- MQTT reports restart automation depth at zero; correlation is preserved, but
+  the in-process depth guard does not prevent loops across MQTT round trips.
+- The standalone relay uses a bounded, volatile command cache and a 300-second
+  expiry window. Its state/deduplication do not survive process restart. The
+  motion probe is one-shot; it publishes only state/status and does not heartbeat.
 
-- No real MQTT broker connection.
-- No authentication or RBAC implementation.
-- No provisioning implementation.
-- No OTA implementation.
-- No BLE Mesh, Zigbee, or Matter implementation.
-- No database schema changes.
-- No migrations.
-- No AI implementation.
-- No services, models, API endpoints, simulator behavior, firmware, hardware
-  integration, or runtime transport changes.
+## 20. Scope of the v0.8 verification
+
+v0.8 adds commissioning tools and acceptance evidence without redesigning v1.
+Its explicit E2E record bootstrap is not a device enrollment/recovery platform.
+Physical firmware/hardware, durable command processing, OTA, BLE Mesh, Zigbee,
+Matter, frontend and AI remain outside this milestone. This compatibility update
+changes no normative wire fields, topic mappings or protocol semantics.
