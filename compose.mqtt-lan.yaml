@@ -1,0 +1,14 @@
+# Optional: always combine with compose.production.yaml. No default host address.
+services:
+  mosquitto:
+    ports:
+      - target: 8883
+        published: "8883"
+        host_ip: "${MQTT_LAN_BIND_IP:?Set the explicit private LAN IPv4 address}"
+        protocol: tcp
+    # A non-internal bridge enables Docker publication; backend is preserved.
+    networks: [backend, mqtt_lan]
+
+networks:
+  mqtt_lan:
+    driver: bridge
