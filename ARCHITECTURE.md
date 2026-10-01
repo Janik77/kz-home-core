@@ -63,7 +63,17 @@ and transport boundaries without attaching a human JWT to MQTT.
 
 Human JWT identity is separate from physical-device identity. MQTT devices must
 never use user tokens, and device credentials must never be stored in `users` or
-refresh sessions. Device provisioning and credentials are future work.
+refresh sessions. Core physical inventory, permanent house binding and admission
+lifecycle are implemented in v0.10; broker credentials remain an external operator
+boundary. See [physical onboarding](DEVICE_ONBOARDING.md). Inventory is private,
+claim consumes a hashed high-entropy code, and ordinary device APIs never expose it.
+Claim and lifecycle mutations use the existing membership/permission matrix.
+
+Physical bindings are stored independently of the room/floor graph. Services
+prevent transfer/deletion through existing CRUD and repositories scope physical
+reads to the binding. New tables arrive only through explicit Alembic migration.
+Approved profiles are server-owned; MQTT ingress and device commands reject
+physical identities unless active. Legacy/E2E devices retain existing behavior.
 
 Any future AI action must execute with the authenticated caller's identity and
 permissions. AI cannot elevate roles, alter membership, bypass

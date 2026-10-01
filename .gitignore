@@ -15,3 +15,5 @@ deploy/local/
 *.p12
 *.pfx
 **/passwords
+
+.idea/

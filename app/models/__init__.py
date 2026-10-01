@@ -10,8 +10,10 @@ from app.models.entities import (
     HouseMembershipORM,
     RefreshSessionORM,
 )
+from app.models.physical_device import PhysicalDeviceORM
 
 __all__ = [
+    "PhysicalDeviceORM",
     "AutomationORM",
     "DeviceORM",
     "EventLogORM",

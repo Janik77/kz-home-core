@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.core.errors import InvalidReferenceError
+from app.core.errors import ConflictError, InvalidReferenceError
 from app.events import Event, EventBus
 from app.repositories.device_repository import DeviceRepository
 from app.repositories.room_repository import RoomRepository
+from app.repositories.physical_device_repository import PhysicalDeviceRepository
+from app.services.onboarding_service import PhysicalBindingGuard
 from app.schemas import DeviceCreate, DeviceRead, DeviceState, DeviceUpdate
 from app.services.state_validator import StateValidator
 from app.transports.base import Transport
@@ -55,12 +57,23 @@ class DeviceService:
         return self._read(self.repository.get(device_id))
 
     def create(self, data: DeviceCreate) -> DeviceRead:
+        physical = PhysicalDeviceRepository(self.repository.session)
+        if physical.by_device(data.id, lock=True) is not None:
+            raise ConflictError("Physical identity is reserved; use device claiming")
         self._validate_room(data.room_id)
         self.state_validator.validate_capabilities(data.capabilities, data.state)
         return self._read(self.repository.create(data.model_dump()))
 
     def update(self, device_id: str, data: DeviceUpdate) -> DeviceRead:
         values = data.model_dump(exclude_unset=True, exclude_none=True)
+        physical = PhysicalDeviceRepository(self.repository.session)
+        target = self.rooms.house_id(values["room_id"]) if "room_id" in values else None
+        PhysicalBindingGuard(physical).structure_mutation("device", device_id, target)
+        if "room_id" in values and self.rooms.house_id(values["room_id"]) != target:
+            raise ConflictError("Target location changed concurrently; retry")
+        if physical.by_device(device_id, lock=True) is not None:
+            if set(data.model_fields_set) - {"name", "room_id"}:
+                raise ConflictError("Physical devices allow only name and room edits")
         if "room_id" in values:
             self._validate_room(values["room_id"])
         if "state" in values or "capabilities" in values:
@@ -72,6 +85,9 @@ class DeviceService:
         return self._read(self.repository.update(device_id, values))
 
     def delete(self, device_id: str) -> None:
+        PhysicalBindingGuard(
+            PhysicalDeviceRepository(self.repository.session)
+        ).structure_mutation("device", device_id, deleting=True)
         self.repository.delete(device_id)
 
     async def update_state(
@@ -82,6 +98,10 @@ class DeviceService:
         correlation_id: str = "",
         depth: int = 0,
     ) -> DeviceRead:
+        physical = PhysicalDeviceRepository(self.repository.session)
+        PhysicalBindingGuard(physical).require_active(device_id)
+        if physical.by_device(device_id) is not None and self.transport is None:
+            raise ConflictError("Physical device commands require a transport")
         entity = self.repository.get(device_id)
         current = self._read(entity)
         if self.transport is not None:
@@ -106,8 +126,8 @@ class DeviceService:
         *,
         correlation_id: str = "",
     ) -> DeviceRead:
+        self.require_house(house_id, device_id, lock=True)
         entity = self.repository.get(device_id)
-        self.require_house(house_id, device_id)
         self.state_validator.validate_report(self._read(entity), patch)
         return await self._persist_state(
             entity, device_id, patch, correlation_id=correlation_id
@@ -143,8 +163,17 @@ class DeviceService:
         )
         return self._read(updated)
 
-    def require_house(self, house_id: str, device_id: str) -> DeviceRead:
-        device = self.get(device_id)
+    def require_house(
+        self, house_id: str, device_id: str, *, lock: bool = False
+    ) -> DeviceRead:
+        PhysicalBindingGuard(
+            PhysicalDeviceRepository(self.repository.session)
+        ).require_active(device_id, lock=lock)
+        device = (
+            self._read(self.repository.get_current(device_id))
+            if lock
+            else self.get(device_id)
+        )
         if self.repository.house_id(device_id) != house_id:
             raise InvalidReferenceError("Device does not belong to MQTT topic house")
         return device
@@ -152,7 +181,7 @@ class DeviceService:
     async def update_status(
         self, house_id: str, device_id: str, online: bool, last_seen: Any
     ) -> bool:
-        device = self.require_house(house_id, device_id)
+        device = self.require_house(house_id, device_id, lock=True)
         changed = device.online != online
         metadata = {**device.metadata, "last_seen": last_seen.isoformat()}
         self.repository.update(device_id, {"online": online, "metadata": metadata})
