@@ -1,4 +1,11 @@
-# KZ Home Core — v0.8 broker-backed acceptance
+# KZ Home Core — v0.10 physical onboarding foundation
+
+Core now supports trusted physical inventory, one-time claim into a house, and
+explicit activation/deactivation/revocation through existing house RBAC. Read
+[onboarding lifecycle, API and operator boundaries](DEVICE_ONBOARDING.md) before
+commissioning. Explicit migration `0005_device_onboarding` is required. MQTT
+credentials/ACLs and firmware/network provisioning remain operator-managed;
+activation confirms external preparation and does not perform it.
 
 v0.8 operator acceptance has passed on the production Compose stack: authenticated
 MQTT over verified TLS; Core reconnect and subscription restoration after a

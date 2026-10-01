@@ -10,7 +10,8 @@ scenes, and automations. `kz-home-core` is its backend: HTTP/WebSocket access,
 persistence, authorization, automation execution, and device transport integration.
 There is no frontend in this repository. ESP32 firmware is maintained separately
 in `kz-home-firmware` (project context); its current implementation and hardware
-compatibility have not been verified here.
+compatibility have not been verified here. Project context confirms separate
+ESP32-C6 firmware v0.9 is implemented and merged; physical acceptance is deferred.
 
 ## 2. Current architecture
 
@@ -100,9 +101,12 @@ Current linear chain, verified from migration revision declarations:
   -> 0002_automation_engine
   -> 0003_auth_foundation
   -> 0004_event_log_correlation
+  -> 0005_device_onboarding
 ```
 
-The sole current head is `0004_event_log_correlation`. It widens the indexed,
+The sole current head is `0005_device_onboarding`. It adds private physical
+inventory and permanent house binding; downgrade refuses nonempty inventory.
+The previous revision `0004_event_log_correlation` widens the indexed,
 non-null `event_logs.correlation_id` from VARCHAR(36) to VARCHAR(128), matching
 the MQTT envelope limit. Downgrade requires an online data check and refuses
 while IDs longer than 36 exist. SQLite does not enforce VARCHAR length like
@@ -151,6 +155,18 @@ Live evidence below is operator-reported; this audit does not access Docker.
 The audit fixed bootstrap's echoed-password fallback and strengthened rollback,
 unchanged-password and exact ACL regression checks. Both passing E2E runners
 and simulator runtime implementations were left unchanged during the final audit.
+
+v0.10 foundation validation (2026-10-01): pre-change baseline **156 passed,
+2 skipped**; focused onboarding/schema/auth/RBAC/MQTT/E2E/bootstrap suite
+**143 passed, 4 skipped**; full suite **233 passed, 4 skipped**. The four skips
+are opt-in dedicated PostgreSQL migration/length and concurrent-claim tests;
+`TEST_POSTGRESQL_URL` was not supplied. The existing Starlette/AnyIO deprecation
+warning remains. Ruff and compileall passed; `git diff --check` passed and Alembic
+reports the sole `0005_device_onboarding` head. IDE inspections report no errors
+in changed Python files; existing type/IDE-configuration warnings remain. IDE
+build reports success but cannot collect full build diagnostics. No migration
+was applied to an installation; no broker-backed acceptance rerun or secret-file,
+deployment or firmware changes were performed by this block.
 
 ## 7. Production/deployment readiness
 
@@ -231,9 +247,19 @@ automation tasks are process-local. Multi-worker coordination is not implemented
 
 ## 9. Current development milestone
 
-v0.8 broker-backed device/automation acceptance is complete at the simulator level,
-with final release audit on `feature/device-e2e-v0.8`. The v0.8 work remains
-uncommitted; the branch has no commits ahead of local `main` at audit time.
+v0.8 broker-backed device/automation acceptance is complete at the simulator level
+and merged (local history includes PR #17). Work now proceeds on
+`feature/device-onboarding-v0.10`; no commit/push/merge/PR is performed in this block.
+
+v0.10 adds trusted inventory registration, a consumed hashed claim code, immutable
+house binding, approved relay profile, atomic claim/lifecycle audit, and Core
+activation/inactive/revoked admission. Owners/installers use the existing RBAC
+matrix's `device.onboard` permission. Ordinary reads expose no onboarding proof
+or broker credentials. Physical transfers/deletion and CRUD profile/state/online/
+metadata overwrites are rejected; legacy/E2E records keep existing behavior.
+See [implementation and exact external credential boundary](DEVICE_ONBOARDING.md).
+Mosquitto administration and credential issuance/rotation/revocation remain
+operator-managed, and physical hardware E2E is not a blocker for this foundation.
 
 The operator reports these live checks passed on the production Compose stack:
 
@@ -288,5 +314,5 @@ Recheck relevant implementation and tests; this snapshot may become stale. Prese
 existing work, service boundaries, house isolation, and separate human/device
 identities. Do not treat protocol requirements or planned steps as implemented.
 
-Last updated: 2026-09-30
-Current milestone: v0.8 final audit/release preparation; no v0.9 work started
+Last updated: 2026-10-01
+Current milestone: v0.10 Core physical onboarding foundation; hardware acceptance deferred

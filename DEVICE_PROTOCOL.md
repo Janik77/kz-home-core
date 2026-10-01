@@ -590,3 +590,17 @@ Its explicit E2E record bootstrap is not a device enrollment/recovery platform.
 Physical firmware/hardware, durable command processing, OTA, BLE Mesh, Zigbee,
 Matter, frontend and AI remain outside this milestone. This compatibility update
 changes no normative wire fields, topic mappings or protocol semantics.
+
+## 21. Core v0.10 onboarding implementation boundary
+
+[DEVICE_ONBOARDING.md](DEVICE_ONBOARDING.md) documents trusted unprovisioned
+inventory, one-time claim into provisioning, active/inactive admission and terminal
+Core revocation. Physical identity is permanently house-bound, independent of
+location edits. The approved relay profile uses the existing named capabilities.
+This implements a subset of §13; manufactured/factory authority, possession-code
+handoff, broker credentials and secure firmware/network delivery remain external.
+Inactive is reversible Core suspension of a bound identity. Revoked recovery is
+not implemented. Broker credential/ACL revocation still requires operator action;
+Core status does not claim to complete transport revocation. No wire changes,
+shared device credentials, new protocol version or automatic certificate authority
+are introduced. Physical ESP32 acceptance remains deferred until hardware exists.

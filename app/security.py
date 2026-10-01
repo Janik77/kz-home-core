@@ -18,6 +18,7 @@ class Permission(StrEnum):
     DEVICE_READ = "device.read"
     DEVICE_CONTROL = "device.control"
     DEVICE_MANAGE = "device.manage"
+    DEVICE_ONBOARD = "device.onboard"
     SCENE_READ = "scene.read"
     SCENE_RUN = "scene.run"
     SCENE_MANAGE = "scene.manage"
@@ -36,6 +37,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
             Permission.DEVICE_READ,
             Permission.DEVICE_CONTROL,
             Permission.DEVICE_MANAGE,
+            Permission.DEVICE_ONBOARD,
             Permission.SCENE_READ,
             Permission.SCENE_RUN,
             Permission.SCENE_MANAGE,

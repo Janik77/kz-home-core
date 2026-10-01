@@ -22,6 +22,7 @@ from app.transports.mqtt_models import StateEnvelope
 
 ROOT = Path(__file__).resolve().parents[1]
 HEAD = "0004_event_log_correlation"
+ONBOARDING_HEAD = "0005_device_onboarding"
 PREVIOUS = "0003_auth_foundation"
 
 
@@ -35,15 +36,17 @@ def migration_config(connection=None):
 
 def test_migration_chain_has_one_head():
     scripts = ScriptDirectory.from_config(migration_config())
-    assert scripts.get_heads() == [HEAD]
+    assert scripts.get_heads() == [ONBOARDING_HEAD]
     revisions = list(scripts.walk_revisions())
     assert [revision.revision for revision in revisions] == [
+        ONBOARDING_HEAD,
         HEAD,
         PREVIOUS,
         "0002_automation_engine",
         "0001_initial",
     ]
     assert [revision.down_revision for revision in revisions] == [
+        HEAD,
         PREVIOUS,
         "0002_automation_engine",
         "0001_initial",
@@ -97,7 +100,10 @@ def verify_upgrade(connection, from_previous):
         assert_column(connection, 36)
         old_id = insert_event(connection, "a" * 36)
     command.upgrade(config, "head")
-    assert connection.scalar(text("SELECT version_num FROM alembic_version")) == HEAD
+    assert (
+        connection.scalar(text("SELECT version_num FROM alembic_version"))
+        == ONBOARDING_HEAD
+    )
     assert_column(connection, 128)
     assert EventLogORM.__table__.c.correlation_id.type.length == 128
     if old_id:
