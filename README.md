@@ -1,4 +1,4 @@
-# KZ Home Core — v0.10 physical onboarding foundation
+# KZ Home Core — v0.11 operator commissioning bridge
 
 Core now supports trusted physical inventory, one-time claim into a house, and
 explicit activation/deactivation/revocation through existing house RBAC. Read
@@ -6,6 +6,11 @@ explicit activation/deactivation/revocation through existing house RBAC. Read
 commissioning. Explicit migration `0005_device_onboarding` is required. MQTT
 credentials/ACLs and firmware/network provisioning remain operator-managed;
 activation confirms external preparation and does not perform it.
+
+The [one-relay commissioning procedure](DEVICE_COMMISSIONING.md) now provides
+deterministic local ACL preparation, interactive operator password updates,
+rotation/revocation checks and optional LAN TLS publication. Base Compose remains
+internal-only for MQTT. No credential API, schema or firmware changes are added.
 
 v0.8 operator acceptance has passed on the production Compose stack: authenticated
 MQTT over verified TLS; Core reconnect and subscription restoration after a
@@ -382,7 +387,9 @@ curl.exe --fail -i http://127.0.0.1:8000/ready
 
 The port command must report `127.0.0.1:8000`. No migrations or data-volume changes
 are required for this network correction.
-This stage does not permit external ESP32 connections or public API access.
+This base topology does not permit external ESP32 connections or public API access.
+For explicit MQTT LAN access without broadening HTTP/PostgreSQL exposure, use
+[the optional commissioning override and TLS SAN procedure](DEVICE_COMMISSIONING.md).
 
 Prepare `deploy/local/production.env` from `deploy/compose.env.example`. Set a
 separate database administrator password, a non-superuser Core database URL using
@@ -429,7 +436,8 @@ docker run --rm -it --user 0:0 --entrypoint mosquitto_passwd -v "$(pwd)/deploy/l
 Use `-c` only when creating a new password file; omit it for updates. This is a
 bootstrap container, not ordinary broker startup. The checked-in ACL allows this
 Core identity to read inbound v1 topics and publish only commands. Anonymous access
-is disabled. Device accounts and per-device ACLs are deferred until commissioning.
+is disabled. Prepare a physical relay's unique account and exact ACL using
+[operator commissioning](DEVICE_COMMISSIONING.md); passwords remain external to Core.
 
 Windows bind mounts do not reliably provide Linux ownership/mode semantics.
 `deploy/mosquitto/start.sh` starts as container root, validates required inputs,
@@ -548,7 +556,9 @@ survive container recreation; certificates/passwords/env remain operator-managed
 host files. Named volumes are not backups. API files need no persistent volume.
 
 HTTPS, reverse proxy, public exposure, certificate automation, physical-device
-network access, backup/restore automation, and MQTT readiness remain deferred.
+hardware acceptance, backup/restore automation, and MQTT readiness remain deferred.
+LAN MQTT is an explicit optional deployment mode, requiring operator DNS/SAN,
+firewall and device-VLAN verification; it is not enabled by base Compose.
 Image tags are major-version pinned, not immutable digests; record tested digests
 for releases. The operator-verified v0.8 paths above do not establish general
 production readiness, backup recoverability or physical-device compatibility.

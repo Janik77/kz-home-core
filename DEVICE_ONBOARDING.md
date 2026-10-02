@@ -6,6 +6,11 @@ Device Protocol v1. The v0.8 software E2E remains verified and merged. The separ
 ESP32-C6 firmware v0.9 is implemented/merged according to project context; physical
 hardware acceptance is deferred until hardware is available.
 
+v0.11 adds a separate [operator commissioning workflow](DEVICE_COMMISSIONING.md):
+local broker ACL tooling, interactive password-file administration, isolation
+probes and optional LAN TLS publication. Core lifecycle/API/persistence remain
+unchanged; no automatic credential authority is introduced.
+
 ## Trusted inventory and claim proof
 
 An operator with trusted server/database access registers inventory explicitly;
@@ -208,9 +213,11 @@ routing/authentication configuration; `device_id` remains Core identity, and
 human JWTs must never become device credentials. Never reuse Core's MQTT account,
 a user's password or a fleet-wide device password.
 
-Required v1 ACL directions for the approved relay are read only its own `set`;
-write only its own `state`, `ack`, `telemetry`, `status`. No wildcards or cross-house
-access. Rotation keeps the same Core device ID. Deactivation/revocation immediately
+The v0.11 one-relay ACL grants read only its own `set` and write only its own
+`state`, `ack`, `status`. Telemetry is not needed by this relay and is not granted;
+this is a narrower authorization subset of Protocol v1, with no wire changes.
+No device wildcards or cross-house access. Rotation keeps the same Core device ID.
+Deactivation/revocation immediately
 deny new Core commands and ingress; the operator must also remove/disable broker
 credentials/ACLs, terminate live sessions, and account for retained/queued traffic
 to complete transport revocation. The existing file-staging model requires an
@@ -220,11 +227,12 @@ these operations. No files under `deploy/local` are read or changed by this bloc
 ## Remaining release work
 
 Before real device commissioning: secure code generation/physical identity
-verification and handoff; a reviewed external broker account/ACL/rotation/revoke
-procedure (or a separately designed least-privilege authority); HTTPS and request
+verification and handoff; execute the external
+[broker account/ACL/rotation/revoke procedure](DEVICE_COMMISSIONING.md); HTTPS and request
 body/access-log redaction plus claim/login rate limiting; and an approved device
-network path with verified TLS hostname/public CA. Current Compose deliberately
-does not expose MQTT to an ESP32 on the LAN.
+network path with verified TLS hostname/public CA. Base Compose deliberately
+does not expose MQTT to an ESP32 on the LAN. The optional `compose.mqtt-lan.yaml`
+requires an explicitly validated private LAN IP, installation DNS/SAN and firewall.
 
 The separate firmware needs secure installation of IDs, broker identity, CA and
 network configuration. BLE/SoftAP/QR/mobile UX, automatic discovery, CA issuance,

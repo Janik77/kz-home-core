@@ -168,6 +168,30 @@ build reports success but cannot collect full build diagnostics. No migration
 was applied to an installation; no broker-backed acceptance rerun or secret-file,
 deployment or firmware changes were performed by this block.
 
+v0.11 commissioning validation (2026-10-02): focused commissioning/onboarding/
+auth/RBAC/MQTT/simulator/E2E/bootstrap checks **218 passed** in 33.24 seconds;
+full normal suite **287 passed, 6 skipped** in 39.63 seconds. Four skips remain
+dedicated PostgreSQL cases; two are opt-in isolated Docker checks. The latter
+passed separately: **2 passed** in 10.43 seconds, using Compose 5.5.1 and Docker
+29.8.0 with only temporary fixture TLS/password inputs and a uniquely named broker
+on a random loopback port. Checks covered effective Compose defaults/LAN merge,
+missing bind-address refusal, real TLS/hostname/untrusted-CA checks, exact ACL
+delivery/write isolation, deliberate ACL broadening detection, existing relay v1
+command/ACK/state, credential rotation with old live-session termination, and
+revocation preserving the Core account. All test containers were removed.
+
+Ruff (`app simulator tests alembic deploy/commission_device.py`), compileall for
+those paths and whitespace checks passed; sole Alembic head remains 0005.
+Pytest cache was disabled without excluding tests. The existing Starlette/AnyIO
+deprecation warning remains. IDE Python inspections found no errors; warnings
+remain for dev requirements recognition and the Windows asyncio policy's future
+deprecation. IDE build reports success with limited diagnostics. The Compose IDE
+IP validator flags the unresolved `host_ip` environment expression; real Compose
+interpolation/configuration checks passed. No production image was built/applied,
+no installation migrations ran, and no `deploy/local`, real secrets/certificates,
+firmware or installed services were changed. Installed LAN/Core/PostgreSQL and
+physical hardware acceptance remain operator-run.
+
 ## 7. Production/deployment readiness
 
 **Already implemented:** configuration guards above; external Alembic migrations;
@@ -199,7 +223,14 @@ keys/CSR/issuance files are not mounted. Host inputs still need OS access contro
 Core uses `SSL_CERT_FILE` with existing verified TLS. No secrets are supplied.
 PostgreSQL health gates Core startup; migrations and initial database-role setup
 remain explicit. Broker startup is not authenticated MQTT readiness. HTTPS,
-reverse proxy, device network access, and certificate automation remain deferred.
+reverse proxy and certificate automation remain deferred. Base Compose is
+internal-only for device access; optional LAN commissioning is described below.
+For a physical relay, v0.11 adds [explicit operator commissioning](DEVICE_COMMISSIONING.md):
+generated local ACL selected through `MQTT_ACL_FILE`, native interactive password
+administration, and an optional `compose.mqtt-lan.yaml` override publishing only
+TLS 8883 on required `MQTT_LAN_BIND_IP`. Mosquitto retains backend and joins a
+separate publishing bridge. PostgreSQL/Core exposure stays unchanged. LAN DNS/SAN,
+firewall and device-VLAN checks remain operator-run; base MQTT stays internal-only.
 Container build/runtime validation must be checked separately from host pytest.
 
 Plan for one Core instance/worker: EventBus, WebSockets, MQTT consumption, and
@@ -224,7 +255,8 @@ automation tasks are process-local. Multi-worker coordination is not implemented
   so the existing in-process depth guard does not cover physical round trips.
 - Command IDs are returned by the gateway but discarded by DeviceService; ACKs
   become events without pending-command tracking, outcome progression, or retries.
-- Device management CRUD can still write observed `state`/`online`. Numeric state
+- Legacy device management CRUD can still write observed `state`/`online`; physical
+  records reject these management writes. Numeric state
   validation is incomplete for some sensor fields. API IDs are less restrictive
   than MQTT topic IDs. These need review before commissioning hardware.
 - WebSocket sends are sequential without deadlines; access-token expiration is
@@ -248,8 +280,9 @@ automation tasks are process-local. Multi-worker coordination is not implemented
 ## 9. Current development milestone
 
 v0.8 broker-backed device/automation acceptance is complete at the simulator level
-and merged (local history includes PR #17). Work now proceeds on
-`feature/device-onboarding-v0.10`; no commit/push/merge/PR is performed in this block.
+and merged (local history includes PR #17). v0.10 onboarding is merged (PR #18).
+This block works on `feature/device-commissioning-v0.11`;
+no commit/push/merge/PR is performed.
 
 v0.10 adds trusted inventory registration, a consumed hashed claim code, immutable
 house binding, approved relay profile, atomic claim/lifecycle audit, and Core
@@ -260,6 +293,17 @@ metadata overwrites are rejected; legacy/E2E records keep existing behavior.
 See [implementation and exact external credential boundary](DEVICE_ONBOARDING.md).
 Mosquitto administration and credential issuance/rotation/revocation remain
 operator-managed, and physical hardware E2E is not a blocker for this foundation.
+
+v0.11 provides one-device host-side ACL grant/check/revoke with immutable-binding
+conflict checks, an opt-in live broker probe and exact operator password/rotation/
+revocation steps. The device principal `kzdevice-{device_id}` reads only its own
+set and writes ack/state/status; no telemetry or wildcard permission is granted.
+Core/E2E principals, existing RBAC, lifecycle, TLS guards and revision 0005 remain
+intact. A broker-admin subsystem, plaintext Core credential storage, firmware,
+Wi-Fi delivery and production CA issuance are not added. The optional LAN bridge
+requires explicit private IP preflight, firewall policy, DNS and certificate SANs
+`mosquitto` plus `mqtt.kzhome.home.arpa` (or a consistently selected local DNS name).
+See [exact commissioning steps and acceptance boundary](DEVICE_COMMISSIONING.md).
 
 The operator reports these live checks passed on the production Compose stack:
 
@@ -279,6 +323,11 @@ claim follows from these simulator results.
 ## 10. Next planned steps
 
 Proposed order; these are pending work, not implemented capabilities:
+
+Next smallest block: operator-run v0.11 commissioning on the intended stack,
+including LAN DNS/SAN/firewall isolation and a physical-identity software relay
+ON/OFF -> correlated persisted ACK/state check. Hardware need not block that
+software check; real ESP32 acceptance follows when hardware is available.
 
 1. [ ] Extend readiness to MQTT subscription state; database/schema readiness and
        separate liveness are implemented.
@@ -314,5 +363,5 @@ Recheck relevant implementation and tests; this snapshot may become stale. Prese
 existing work, service boundaries, house isolation, and separate human/device
 identities. Do not treat protocol requirements or planned steps as implemented.
 
-Last updated: 2026-10-01
-Current milestone: v0.10 Core physical onboarding foundation; hardware acceptance deferred
+Last updated: 2026-10-02
+Current milestone: v0.11 one-relay operator commissioning bridge; hardware acceptance deferred

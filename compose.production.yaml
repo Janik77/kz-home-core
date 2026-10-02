@@ -87,7 +87,7 @@ services:
         bind:
           create_host_path: false
       - type: bind
-        source: ./deploy/mosquitto/acl
+        source: ${MQTT_ACL_FILE:-./deploy/mosquitto/acl}
         target: /bootstrap/acl
         read_only: true
         bind:
