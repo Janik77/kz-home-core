@@ -39,7 +39,7 @@ class API:
             urllib.request.ProxyHandler({}), NoRedirect()
         )
 
-    async def request(self, method, path, body=None):
+    async def request(self, method, path, body=None, *, expected_status=None):
         def send():
             headers = {"Content-Type": "application/json"}
             if self.token:
@@ -52,22 +52,33 @@ class API:
             )
             try:
                 with self.opener.open(request, timeout=5) as response:
+                    if (
+                        expected_status is not None
+                        and response.status != expected_status
+                    ):
+                        raise Failure("Unexpected HTTP status")
                     return json.load(response)
             except urllib.error.HTTPError as error:
+                if expected_status is not None and error.code == expected_status:
+                    return None  # Never expose error bodies or rejected input.
                 raise Failure(f"HTTP request failed (status {error.code})") from None
+            except Failure:
+                raise
             except Exception:
                 raise Failure("HTTP transport or JSON response failed") from None
 
         return await asyncio.to_thread(send)
 
 
-def evidence(events, command, expected, before):
+def evidence(
+    events, command, expected, before, *, house_id="e2e_house", device_id="e2e_relay"
+):
     fresh = [
         event
         for event in events
         if event["id"] not in before
-        and event["house_id"] == "e2e_house"
-        and event["entity_id"] == "e2e_relay"
+        and event["house_id"] == house_id
+        and event["entity_id"] == device_id
         and event["correlation_id"] == command.correlation_id
     ]
     acks = [
@@ -92,7 +103,7 @@ async def poll(check):
         await asyncio.sleep(0.2)
 
 
-async def scenario(api, client, relay, timeout):
+async def scenario(api, client, relay, timeout, *, device=DEVICE, events_path=EVENTS):
     phase = "initial MQTT status/state and persisted off baseline"
     observed = ""
     try:
@@ -103,24 +114,27 @@ async def scenario(api, client, relay, timeout):
             await relay.state(str(uuid4()))
 
             async def baseline():
-                device = await api.request("GET", DEVICE)
+                current = await api.request("GET", device)
                 return (
-                    device["state"].get("on") is False
-                    and device["online"] is True
-                    and device["metadata"].get("last_seen")
+                    current["state"].get("on") is False
+                    and current["online"] is True
+                    and current["metadata"].get("last_seen")
                     == status.last_seen.isoformat()
                 )
 
             await poll(baseline)
         used_ids = set()
         used_correlations = set()
+        commands = []
         for expected, action in ((True, "on"), (False, "off")):
             phase = action + ": snapshot event history"
             observed = ""
             async with asyncio.timeout(timeout):
-                before = {event["id"] for event in await api.request("GET", EVENTS)}
+                before = {
+                    event["id"] for event in await api.request("GET", events_path)
+                }
                 phase = action + ": HTTP command"
-                await api.request("POST", DEVICE + "/" + action)
+                await api.request("POST", device + "/" + action)
                 phase = action + ": simulator MQTT receipt/application"
                 # Messages are buffered by aiomqtt while the HTTP request finishes.
                 while True:
@@ -155,14 +169,22 @@ async def scenario(api, client, relay, timeout):
                     raise Failure("Simulator did not apply the received command")
                 used_ids.add(command.command_id)
                 used_correlations.add(command.correlation_id)
+                commands.append(command)
                 phase = action + ": persisted matching ACK/state and final GET"
 
                 async def confirmed():
                     nonlocal observed
-                    events = await api.request("GET", EVENTS)
-                    has_ack, has_state = evidence(events, command, expected, before)
-                    device = await api.request("GET", DEVICE)
-                    stored = device["state"].get("on") is expected
+                    events = await api.request("GET", events_path)
+                    has_ack, has_state = evidence(
+                        events,
+                        command,
+                        expected,
+                        before,
+                        house_id=relay.house_id,
+                        device_id=relay.device_id,
+                    )
+                    current = await api.request("GET", device)
+                    stored = current["state"].get("on") is expected
                     observed = (
                         f" (ACK={has_ack}, state_event={has_state}, GET={stored})"
                     )
@@ -172,6 +194,7 @@ async def scenario(api, client, relay, timeout):
                 print(
                     f"PASS {action.upper()}: HTTP, MQTT apply, matching ACK/state, persisted GET"
                 )
+        return commands
     except TimeoutError:
         raise Failure("Timeout during " + phase + observed) from None
     except Failure as error:

@@ -229,6 +229,15 @@ matching persisted ACK/state correlation and final GET values as in
 or controller concurrently. The existing automated v0.8 runner remains restricted
 to its E2E IDs; it does not silently adopt physical inventory.
 
+v0.12 adds a separate [physical identity acceptance runner](simulator/PHYSICAL_ACCEPTANCE.md)
+for these already claimed/active IDs, using the same `RELAY_*` environment file.
+It checks ON/OFF, correlated persisted ACK/state, duplicate handling and offline
+dispatch without changing lifecycle or broker credentials. Run its documented
+one-off command with exclusive relay control. Its isolated full-stack test passed
+on 2026-10-04 (**1 passed in 93.08 s**), including PostgreSQL persistence/restart
+and real broker isolation checks. No physical hardware or existing-installation
+verification is claimed.
+
 ## Rotate and revoke
 
 Rotation keeps house/device/username unchanged. First Core-deactivate the device
