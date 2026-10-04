@@ -1,5 +1,9 @@
 # Operator-run v0.8 acceptance (PowerShell)
 
+For the separately commissioned physical relay identity, use
+[v0.12 physical software acceptance](PHYSICAL_ACCEPTANCE.md). The procedures below
+retain the v0.8 fixed E2E identities and their original live verification scope.
+
 ## Verified milestone — 2026-09-30
 
 The operator reports both scenarios below PASSED against the production Compose

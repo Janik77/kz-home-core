@@ -3,6 +3,90 @@
 Canonical development handoff. This is a repository snapshot, not certification
 of a deployed installation. Update it when capabilities or validation change.
 
+## Latest block — v0.12 software physical identity acceptance (2026-10-04)
+
+Branch: `feature/software-device-e2e-v0.12`, starting clean at merged v0.11.
+[Operator commands and exact acceptance boundaries](simulator/PHYSICAL_ACCEPTANCE.md).
+The new opt-in `simulator.physical_acceptance --run` uses the existing commissioned
+identity, v1 Relay and API/service/gateway/event persistence path; no Core runtime,
+schema, production Compose, firmware or local installation inputs were changed.
+The v0.8 runner's shared HTTP/evidence/scenario helpers now accept explicit paths
+and house/device IDs while preserving its fixed-identity CLI and default behavior.
+
+The runner requires ready Core, authenticated device/event access and an active
+physical relay with permanent binding. It rejects enabled rules referencing that
+relay. ON/OFF requires actual MQTT receipt, unique IDs, matching applied ACK and
+correlated state events plus resulting GET. A saved ON receipt replay after OFF
+uses the relay's existing cache and sends only its original ACK; unchanged OFF
+reports must not add state events. Offline subscription removal/status checks
+prove HTTP dispatch does not become false ACK/state confirmation during a bounded
+window. Ordinary GET/list/events are checked for private fields and known secrets.
+Success leaves the existing active binding OFF/offline and is repeatable. No
+lifecycle, credential, broker configuration or production seed is performed.
+
+`tests/test_physical_acceptance.py` exercises migrated SQLite and actual API/RBAC,
+services, gateway, repositories and EventLog with only MQTT network I/O replaced.
+The opt-in `tests/test_physical_acceptance_live.py` derives an exclusively owned
+fixture from effective production Compose: non-superuser PostgreSQL, explicit
+migrations/inventory registration, human API claim/activation, real TLS Mosquitto
+and exact v0.11 ACL. It tests negative broker/RBAC access, two complete runner
+passes, independent PostgreSQL state/ACK/event/lifecycle/security-audit reads,
+and survival of Core recreation/PostgreSQL restart. Random resource names and
+temporary test inputs preserve `deploy/local` and installed volumes; no PostgreSQL
+port is published and fixture HTTP/MQTT ports bind random loopback ports only.
+
+**Verification boundary:** offline integration and the real isolated Docker
+acceptance now pass. On 2026-10-04, after Docker Desktop became available, the
+prepared test completed **1 passed in 93.08 s** without a code fix. This verifies
+the complete PostgreSQL/Core/Mosquitto TLS/physical-identity software relay path,
+two ON/OFF cycles, correlated ACK/state, replay/offline checks, negative broker
+ACL/authentication and human RBAC/IDOR checks, independent database evidence and
+state/event survival after PostgreSQL restart and Core recreation. It does not
+verify physical hardware, LAN deployment or the existing installation. Nothing
+was deployed or changed in that installation; its original container/network IDs
+and volumes were preserved.
+
+The first resumed attempt stopped at the local-image prerequisite because the
+existing Dockerfile's `python:3.12-slim-bookworm` base image was absent. Fetching
+that test dependency resolved setup; no application or test code changed. The
+fixture removed its containers, networks, volumes, image and private inputs.
+Both newly created workspace test directories and the newly fetched base-image
+tag were also removed; no labeled acceptance resources remained.
+
+Final checks for this block:
+
+- Focused physical/v0.8 E2E/onboarding/commissioning/relay suite: **190 passed in
+  27.43 s**.
+- Full normal pytest: **311 passed, 7 skipped in 43.34 s**. Four skips require a
+  dedicated PostgreSQL test URL; three are opt-in Docker checks. Five deprecation
+  warnings: the existing Starlette/AnyIO warning and four Alembic legacy
+  `prepend_sys_path` configuration warnings during explicit fixture migrations.
+- Effective production Compose/default LAN override validation, with dummy
+  process inputs and no daemon required: **1 passed in 2.05 s**.
+- Opt-in full-stack validation: **1 passed in 93.08 s** with Docker Client/Linux
+  Server 29.8.0. The earlier daemon-unavailable attempt and resumed missing-image
+  setup failure are resolved. No code changed during resumed validation, so the
+  full regression result above remains the latest; it was not rerun for doc-only
+  updates. Windows fixture temp directories were new and explicitly cleaned.
+- Ruff over app/simulator/tests/Alembic/commissioning tool and compileall: passed.
+  Tracked and new-file whitespace checks: passed. Sole Alembic head remains
+  `0005_device_onboarding`; no revision was added or startup migration introduced.
+- PyCharm MCP inspections: no errors in changed Python files. IDE build reports
+  success with limited build diagnostics. No secret/build artifacts appear in
+  normal Git status; generated fixture inputs and local installation files are
+  ignored. Initial clean tree now has six modified and five new requested files;
+  no commit, push, merge, PR or deployment was performed.
+
+Core's existing command-outcome tracking, retries, heartbeat/freshness and durable
+simulator replay gaps remain. Duplicate ACKs are stored; unchanged-state reports
+do not create state events. The runner deliberately replays a saved receipt in
+the handler; it does not prove broker retransmission. HTTP 200 for an offline
+command means dispatch, not physical success. GPIO/electrical behavior, firmware
+durability/clock/reconnect and actual LAN DNS/SAN/VLAN installation remain unverified.
+The next smallest block is operator acceptance on the already commissioned
+installation using the documented one-off runner, followed by physical acceptance
+when hardware is available. Hardware is not required for that operator software run.
+
 ## 1. Project goal
 
 KZ Home is a smart-home platform for organizing houses and controlling devices,

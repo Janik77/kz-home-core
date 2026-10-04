@@ -1,4 +1,4 @@
-# KZ Home Core — v0.11 operator commissioning bridge
+# KZ Home Core — v0.12 commissioned identity software acceptance
 
 Core now supports trusted physical inventory, one-time claim into a house, and
 explicit activation/deactivation/revocation through existing house RBAC. Read
@@ -11,6 +11,14 @@ The [one-relay commissioning procedure](DEVICE_COMMISSIONING.md) now provides
 deterministic local ACL preparation, interactive operator password updates,
 rotation/revocation checks and optional LAN TLS publication. Base Compose remains
 internal-only for MQTT. No credential API, schema or firmware changes are added.
+
+v0.12 adds an [opt-in physical identity acceptance runner](simulator/PHYSICAL_ACCEPTANCE.md)
+and a disposable production-component Docker test. They reuse the commissioned
+identity, real APIs and existing v1 relay simulator. Offline integration and the
+isolated real PostgreSQL/Core/Mosquitto TLS test pass, including negative access
+and restart persistence checks (**1 Docker test passed in 93.08 s**, 2026-10-04).
+Physical hardware and the existing installation were not tested or changed.
+Production runtime/configuration remain unchanged.
 
 v0.8 operator acceptance has passed on the production Compose stack: authenticated
 MQTT over verified TLS; Core reconnect and subscription restoration after a

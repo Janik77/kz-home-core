@@ -1,5 +1,9 @@
 # Standalone MQTT simulators (v0.8)
 
+For an already claimed/active physical identity with a unique `kzdevice-*` account,
+see [v0.12 software acceptance](PHYSICAL_ACCEPTANCE.md). It hosts this same relay
+implementation, validates API/event persistence and does not require hardware.
+
 For explicit operator bootstrap, authenticated API control and correlated
 PostgreSQL event verification, follow [E2E acceptance](E2E_ACCEPTANCE.md).
 Both the HTTP relay ON/OFF and MQTT motion-triggered automation scenarios have
