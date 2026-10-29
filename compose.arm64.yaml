@@ -1,0 +1,48 @@
+# Opt-in overlay ONLY with compose.production.yaml. Fresh project/volumes.
+name: kzhome-arm64
+
+services:
+  core:
+    platform: linux/arm64
+    image: ${CORE_ARM64_IMAGE:-kz-home-core:v0.13-arm64}
+  postgres:
+    platform: linux/arm64
+    stop_grace_period: 60s
+  mosquitto:
+    platform: linux/arm64
+    stop_grace_period: 30s
+  proxy:
+    image: nginx:1.28-alpine
+    platform: linux/arm64
+    restart: unless-stopped
+    stop_grace_period: 30s
+    ports:
+      - "${HTTPS_BIND_IP:?Choose an explicit host LAN or loopback IP}:443:443"
+    volumes:
+      - type: bind
+        source: ./deploy/nginx/arm64.conf
+        target: /etc/nginx/conf.d/default.conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./deploy/local/web
+        target: /usr/share/nginx/html
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./deploy/local/https
+        target: /etc/nginx/tls
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      core:
+        condition: service_healthy
+    networks: [frontend]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
