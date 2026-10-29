@@ -3,6 +3,9 @@
 Для изолированного локального запуска в Docker без использования старых данных:
 [локальный Docker Compose](deploy/LOCAL_COMPOSE.md).
 
+For the opt-in Linux ARM64 deployment overlay, HTTPS Web/API gateway, hardware
+criteria and recovery procedures, see [ARM64 deployment readiness v0.13](deploy/ARM64_DEPLOYMENT.md).
+
 Core now supports trusted physical inventory, one-time claim into a house, and
 explicit activation/deactivation/revocation through existing house RBAC. Read
 [onboarding lifecycle, API and operator boundaries](DEVICE_ONBOARDING.md) before
