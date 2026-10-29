@@ -1,0 +1,85 @@
+# Standalone local stack: do not merge with compose.production.yaml.
+# Fixed local connection settings deliberately ignore the existing .env.
+name: kzhome-local
+
+x-local-core: &local-core
+  build: .
+  image: kz-home-core:dev-local
+  environment:
+    APP_ENV: local
+    APP_DEBUG: "false"
+    DATABASE_URL: postgresql+psycopg://kzhome_local:local-only-password@postgres:5432/kzhome_local
+    AUTH_JWT_SECRET: development-only-change-me-32-bytes
+    KZHOME_SIMULATOR_ENABLED: "false"
+    MQTT_ENABLED: "true"
+    MQTT_HOST: mosquitto
+    MQTT_PORT: "1883"
+    MQTT_TLS_ENABLED: "false"
+    MQTT_CLIENT_ID: kzhome-local-core
+    MQTT_KEEPALIVE: "60"
+
+services:
+  core:
+    <<: *local-core
+    restart: unless-stopped
+    stop_grace_period: 30s
+    ports:
+      - "127.0.0.1:18000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      mosquitto:
+        condition: service_healthy
+
+  migrate:
+    <<: *local-core
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kzhome_local
+      POSTGRES_PASSWORD: local-only-password
+      POSTGRES_DB: kzhome_local
+    ports:
+      - "127.0.0.1:15432:5432"
+    volumes:
+      - local_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kzhome_local -d kzhome_local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:11883:1883"
+    volumes:
+      - type: bind
+        source: ./deploy/mosquitto/mosquitto.local.conf
+        target: /mosquitto/config/mosquitto.conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - local_mosquitto_data:/mosquitto/data
+    healthcheck:
+      test: ["CMD", "mosquitto_pub", "-h", "127.0.0.1", "-t", "kzhome-local/health", "-m", "ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+# Compose prefixes these NEW volumes with kzhome-local_. No external volumes,
+# fixed container names, production certificates, or host database mounts.
+volumes:
+  local_postgres_data:
+  local_mosquitto_data:
