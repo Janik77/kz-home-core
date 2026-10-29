@@ -1,0 +1,72 @@
+# Explicit overlay on production; on ARM64 place compose.arm64.yaml before this.
+# Requires Compose >=2.24.4 for !override. Never use with compose.local.yaml.
+name: kzhome-demo
+services:
+  core:
+    image: ${DEMO_CORE_IMAGE:?Run demo.py prepare}
+    platform: ${DEMO_PLATFORM:?Run demo.py prepare}
+    environment:
+      KZHOME_DEMO_ENABLED: "1"
+    ports: !override
+      - "127.0.0.1:${DEMO_API_PORT:?Run demo.py prepare}:8000"
+    volumes:
+      - type: bind
+        source: ${DEMO_INPUT_DIR}/mqtt/ca.crt
+        target: /run/mqtt/ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
+  postgres:
+    platform: ${DEMO_PLATFORM}
+    stop_grace_period: 60s
+  mosquitto:
+    platform: ${DEMO_PLATFORM}
+    volumes:
+      - type: bind
+        source: ${DEMO_INPUT_DIR}/mqtt/ca.crt
+        target: /bootstrap/ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${DEMO_INPUT_DIR}/mqtt/server.crt
+        target: /bootstrap/server.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${DEMO_INPUT_DIR}/mqtt/server.key
+        target: /bootstrap/server.key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${DEMO_INPUT_DIR}/mqtt/passwords
+        target: /bootstrap/passwords
+        read_only: true
+        bind:
+          create_host_path: false
+  proxy:
+    build:
+      context: ${DEMO_WEB_CONTEXT:?Run demo.py prepare}
+    image: ${DEMO_WEB_IMAGE:?Run demo.py prepare}
+    platform: ${DEMO_PLATFORM}
+    restart: unless-stopped
+    ports: !override
+      - "127.0.0.1:${DEMO_WEB_PORT:?Run demo.py prepare}:8080"
+    volumes: !override
+      - type: bind
+        source: ${DEMO_INPUT_DIR}/proxy.conf
+        target: /etc/nginx/conf.d/default.conf
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      core:
+        condition: service_healthy
+    networks: [frontend]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
