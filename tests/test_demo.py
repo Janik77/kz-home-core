@@ -115,14 +115,16 @@ def test_web_snapshot_excludes_environment_and_preserves_source(tmp_path, monkey
 
     source = tmp_path / "source"
     source.mkdir()
-    for filename in ("package.json", "package-lock.json", ".env.local"):
+    for filename in ("package.json", "package-lock.json", "index.html", ".env.local"):
         (source / filename).write_text("local-test-input")
 
     def git(args, **kwargs):
         if "status" in args:
             return ""
+        if "--show-toplevel" in args:
+            return str(source)
         return (
-            "package.json\npackage-lock.json\n.env.local"
+            "package.json\0package-lock.json\0index.html\0.env.local\0"
             if "ls-files" in args
             else "test-revision"
         )

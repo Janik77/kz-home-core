@@ -61,8 +61,9 @@ py -3.12 deploy/demo.py credentials --run
   `deploy/local/demo/kzhome-demo/`, вне Docker build context Core;
 - копирует tracked-файлы чистого Web checkout в отдельный build context Core.
   Исходный Web, его `.env`, `node_modules` и `dist` не изменяются и не используются;
-- собирает Web через `npm ci` внутри Node-контейнера, только с публичными
-  `VITE_DATA_MODE=core`, `VITE_API_URL=/core-api`. Секретов в VITE нет.
+- подготавливает snapshot для сборки Web. Саму сборку через `npm ci` внутри
+  Node-контейнера выполняет **start**, только с публичными `VITE_DATA_MODE=core`,
+  `VITE_API_URL=/core-api`. Секретов в VITE нет.
 
 `start` собирает образы, поднимает БД/брокер, создаёт отдельную несуперпользовательскую
 роль БД, явно применяет Alembic, запускает bootstrap и затем Core/Web. Core остаётся
@@ -162,6 +163,69 @@ DB/broker версии автоматически. Обновление инфр
 демо. Это воспроизводимая процедура, не обещание побайтово одинаковой сборки.
 
 ## 5. Если не работает
+
+### Отказ `prepare` на Windows
+
+Старое единственное сообщение `FAIL: demo operation stopped...` не позволяет
+установить первопричину. Одинаковый результат на Python 3.12/3.13 не доказывает
+ошибку Python. `Test-Path ..\kz-home-web` проверяет лишь наличие каталога:
+helper дополнительно требует отдельный Git checkout, чистые tracked-файлы и
+tracked `package.json`, `package-lock.json`, `index.html`. Git должен быть
+доступен в **том же** PowerShell, из которого запускается helper.
+
+Обновлённый helper печатает `STEP [этап]`, затем при отказе — `FAIL [код]`,
+фиксированную подсказку и безопасную категорию причины/exit code. Можно передать
+разработчику эти строки. Он не печатает exception text, команды с аргументами,
+stdout/stderr subprocess, environment или содержимое приватных файлов. Не
+добавляйте debug/transcript и не публикуйте `state.json`, `compose.env`, passwords.
+
+| Код / этап | Причина и безопасное действие |
+| --- | --- |
+| `arguments` | Неверное имя проекта или порты; диапазон 1024–65535, порты должны различаться. |
+| `web-checkout` | Неверный путь/корень checkout, отсутствующий Git, Git ownership/safe.directory отказ. Проверить `git -C ..\kz-home-web rev-parse --show-toplevel` и `git -C ..\kz-home-web status --short` локально. Не отключать Git protection глобальным `safe.directory=*`. |
+| `web-files`, `web-dirty` | Неполный checkout, отсутствующий/untracked обязательный файл или tracked changes. Сохранить работу; использовать отдельный чистый checkout согласованной версии. Не делать reset/clean. |
+| `core-assets` | Отсутствуют Compose/Dockerfile/proxy/broker assets либо изменён шаблон proxy. Проверить комплектность согласованной версии Core. |
+| `docker-engine`, `compose-version` | Проверить `docker info` и `docker compose version`. Нужны Linux containers и Compose ≥2.24.4; версия 2.39.1 соответствует требованию. |
+| `mount-path` | Запятые/апострофы/переводы строк конфликтуют с mount/env-file delimiters. Выбрать путь без них. `E:\KZ_Home\...` и пути с пробелами допустимы; аргументы передаются без shell-конкатенации. |
+| `private-directory`, `private-inputs`, `web-copy` | Недостаточно прав/места, недоступный tracked-файл, symlink или path escape. Проверить доступ к новой папке и исходникам; `.env` не копируется. |
+| `windows-sid` | `whoami /user` не дал корректный SID пользователя. Проверить команду в том же пользовательском сеансе. |
+| `windows-acl` | Не удалось применить `icacls`. Проверить ownership, права и поддержку Windows ACL файловой системой диска E: (обычно NTFS). FAT/exFAT не являются эквивалентом NTFS ACL. Не обходить защиту приватной папки. |
+| `mqtt-certificates` | Не удалось получить/запустить `alpine/openssl` или записать сертификаты через bind mount. Проверить registry/DNS/proxy Docker, доступ Docker к диску и свободное место. Host OpenSSL не нужен. |
+| `mqtt-passwords` | Не удалось получить/запустить `eclipse-mosquitto:2` или обработать файл через bind mount. Не открывать passwords в логах/чате. |
+| `existing-config` | Сохранённые metadata отсутствуют/повреждены/несовместимы или недоступны. Сохранить файлы; восстанавливать оригинальный комплект, не генерировать пароли для старой БД. |
+| `incomplete-prepare` | Каталог проекта уже существует, но `state.json` не записан. Это может быть остаток предыдущего сбоя. Повторный prepare намеренно не перезаписывает его. |
+| `isolation-check` | Не прошёл `compose config` или проверка ownership томов/loopback ports. Не менять защиту и не подключать чужие volumes. |
+
+Проверки Web, Core assets, Docker и Compose выполняются до создания новой
+приватной папки. После этого всё ещё возможны ACL, копирование, disk I/O и
+container/image failures. `state.json` записывается только после обоих helper
+контейнеров; отсутствие этого файла не означает, что секреты ещё не создавались.
+Первое получение helper images требует registry access, даже с работающим Engine.
+Флаг `--network none` изолирует helper container, но не загрузку image Docker daemon.
+Node/npm, Core/Web builds и проверка занятости host ports относятся к `start`,
+а не `prepare`. `prepare` проверяет лишь значения портов и isolation config.
+
+После доставки исправленного helper сначала повторите обычный `prepare`.
+Если он сообщает **incomplete-prepare**, сохраните прежнюю папку. Для нового
+демо без переноса старых данных выберите ещё не использованное имя и другие
+свободные порты; не удаляйте старые файлы, контейнеры или тома:
+
+```powershell
+Set-Location 'E:\KZ_Home\kz-home-core'
+py -3.12 -u deploy/demo.py prepare --run --web 'E:\KZ_Home\kz-home-web'
+# Только при incomplete-prepare и для отдельного НОВОГО демо:
+py -3.12 -u deploy/demo.py prepare --run --project kzhome-demo-mentor-retry --web 'E:\KZ_Home\kz-home-web' --api-port 18280 --web-port 18281
+# Следующие команды запускать по одной, только после успеха предыдущей:
+py -3.12 -u deploy/demo.py start --run --project kzhome-demo-mentor-retry
+py -3.12 deploy/demo.py verify --run --project kzhome-demo-mentor-retry
+py -3.12 deploy/demo.py credentials --run --project kzhome-demo-mentor-retry
+```
+
+Для этого нового проекта Web открывается на **http://127.0.0.1:18281**.
+Если обычный prepare успешен, используйте обычные команды раздела 2 без нового
+`--project` и адрес 18081. Оригинальная причина сбоя на машине наставника остаётся
+неустановленной до получения нового `FAIL [код]`; не считать ACL или registry
+проблему доказанной только по старому общему сообщению.
 
 | Симптом | Что проверить |
 | --- | --- |

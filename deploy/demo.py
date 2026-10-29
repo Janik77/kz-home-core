@@ -16,6 +16,54 @@ from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# Only these developer-owned messages may reach the failure output. Never print
+# exception text, subprocess args/stdout/stderr, environment or private JSON.
+DIAGNOSTICS = {
+    "arguments": "Use a kzhome-demo[-suffix] project name and distinct ports from 1024 to 65535.",
+    "existing-config": "Cannot load existing demo metadata. Preserve private files and volumes; do not regenerate credentials for an existing database.",
+    "incomplete-prepare": "The demo directory exists without state.json. A previous prepare may have stopped early. Preserve it; use a NEW --project kzhome-demo-<suffix> or restore its original complete inputs.",
+    "web-checkout": "Check Git is on PATH and --web points to the separate Git checkout root. Run git -C <web> status locally; review ownership/safe.directory errors without disabling Git protections globally.",
+    "web-files": "Web must contain tracked package.json, package-lock.json and index.html. A directory existing is insufficient; use the complete reviewed Web checkout.",
+    "web-dirty": "Web has tracked changes. Preserve them; use a separate clean reviewed checkout. Untracked/ignored files are not copied.",
+    "web-copy": "Cannot snapshot tracked Web files. Check read/write permissions, disk space and source availability; symlinks/path escapes are not accepted.",
+    "core-assets": "Required Core demo files are missing or the proxy template changed. Use the complete reviewed Core checkout.",
+    "docker-engine": "Run docker info locally. Docker Desktop must be running, accessible to this user and use Linux containers.",
+    "compose-version": "Run docker compose version. Compose 2.24.4 or newer is required for !override.",
+    "mount-path": "Use a Core checkout path without commas, apostrophes or line breaks (Docker mount/env-file delimiters). Spaces and drive letters are supported.",
+    "private-directory": "Cannot create/protect the NEW demo directory. Check disk space and filesystem permissions; do not change existing installation files.",
+    "windows-sid": "Cannot identify the Windows account. Run whoami /user locally; a valid account SID is required.",
+    "windows-acl": "Cannot restrict the NEW demo directory. Check icacls availability, ownership and Windows ACL support on the drive (normally NTFS); do not bypass this protection.",
+    "private-inputs": "Cannot write new demo inputs. Check disk space and write permissions. Preserve any partial directory; no automatic reset is performed.",
+    "mqtt-certificates": "Certificate helper failed. Check Docker registry/DNS/proxy access to alpine/openssl, drive sharing/bind-mount permissions and free space. Host OpenSSL is not required.",
+    "mqtt-passwords": "Password-file helper failed. Check access to eclipse-mosquitto:2, bind-mount permissions and free space. Never display the password file.",
+    "isolation-check": "Compose configuration or resource isolation check failed. Check local config with --quiet and Docker availability; preserve existing resources and never attach non-demo volumes.",
+    "operation": "Demo operation failed. Check the guide and local prerequisites; command output and private contents are intentionally withheld.",
+}
+
+
+class DemoError(ValueError):
+    def __init__(self, code):
+        self.code = code
+        super().__init__(code)
+
+
+def safe_reason(error):
+    if isinstance(error, subprocess.CalledProcessError):
+        return f"external command exited with code {int(error.returncode)}"
+    if isinstance(error, subprocess.TimeoutExpired):
+        return "external command timed out"
+    if isinstance(error, FileNotFoundError):
+        return "required executable or file not found"
+    if isinstance(error, PermissionError):
+        return "access denied"
+    if isinstance(error, (json.JSONDecodeError, KeyError, TypeError)):
+        return "invalid or incomplete configuration"
+    if isinstance(error, KeyboardInterrupt):
+        return "interrupted"
+    if isinstance(error, OSError):
+        return "filesystem or operating-system error"
+    return "validation or operation failed"
+
 
 def command(args, *, cwd=ROOT, env=None, input_text=None, timeout=900):
     result = subprocess.run(
@@ -24,15 +72,15 @@ def command(args, *, cwd=ROOT, env=None, input_text=None, timeout=900):
         env=env,
         input=input_text,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         timeout=timeout,
     )
     if result.returncode:
         # Never echo subprocess environment, credential-bearing args or output.
-        raise RuntimeError(
-            "Command failed; check Docker, port availability and prerequisites (details withheld)"
-        )
-    return result.stdout.strip()
+        raise subprocess.CalledProcessError(result.returncode, args)
+    return result.stdout.rstrip("\r\n")
 
 
 def private_write(path, text):
@@ -40,16 +88,31 @@ def private_write(path, text):
     path.chmod(0o600)
 
 
+def check_web(web):
+    web = web.resolve()
+    if web == ROOT or not web.is_dir():
+        raise DemoError("web-checkout")
+    required = {"package.json", "package-lock.json", "index.html"}
+    if not all((web / name).is_file() for name in required):
+        raise DemoError("web-files")
+    root = command(["git", "rev-parse", "--show-toplevel"], cwd=web)
+    if Path(root).resolve() != web:
+        raise DemoError("web-checkout")
+    if command(["git", "status", "--porcelain", "--untracked-files=no"], cwd=web):
+        raise DemoError("web-dirty")
+    # NUL-delimited names avoid Git quoting non-ASCII Windows filenames.
+    filenames = command(["git", "ls-files", "-z"], cwd=web).split("\0")
+    if not required.issubset(filenames):
+        raise DemoError("web-files")
+    return [name for name in filenames if name]
+
+
 def stage_web(web, target):
     web = web.resolve()
-    if web == ROOT or not (web / "package-lock.json").is_file():
-        raise ValueError("Provide the separate kz-home-web checkout")
-    if command(["git", "status", "--porcelain", "--untracked-files=no"], cwd=web):
-        raise ValueError("Web tracked working tree must be clean")
-    for filename in command(["git", "ls-files"], cwd=web).splitlines():
+    for filename in check_web(web):
         source = web / filename
         if not source.resolve().is_relative_to(web) or source.is_symlink():
-            raise ValueError("Web source symlinks are not accepted")
+            raise DemoError("web-copy")
         if any(part.startswith(".env") for part in Path(filename).parts):
             continue
         destination = target / filename
@@ -95,9 +158,18 @@ class Demo:
         self.path = project_path(project)
         self.state = None
         self.env = None
+        self.step = "operation"
+
+    def preparing(self, step):
+        self.step = step
+        print(f"STEP [{step}]", flush=True)
 
     def load(self):
-        self.state = json.loads((self.path / "state.json").read_text())
+        previous_step = self.step
+        self.step = "existing-config"
+        if self.path.is_dir() and not (self.path / "state.json").exists():
+            raise DemoError("incomplete-prepare")
+        self.state = json.loads((self.path / "state.json").read_text(encoding="utf-8"))
         if self.state["project"] != self.project or self.state.get("version") != 14:
             raise ValueError("Wrong demo installation metadata")
         self.env = {
@@ -108,6 +180,7 @@ class Demo:
         # These must never come from a developer's unrelated process environment.
         self.env.pop("COMPOSE_FILE", None)
         self.env.pop("COMPOSE_PROFILES", None)
+        self.step = previous_step
 
     def dc(self, *args, input_text=None):
         if self.state is None:
@@ -130,6 +203,8 @@ class Demo:
 
     def guard(self):
         """Never attach an existing non-demo volume or fixed-name container."""
+        previous_step = self.step
+        self.step = "isolation-check"
         config = json.loads(self.dc("config", "--format", "json"))
         for key, volume in config["volumes"].items():
             expected = self.project + "_" + key
@@ -152,6 +227,7 @@ class Demo:
                 p["host_ip"] != "127.0.0.1" for p in config["services"][name]["ports"]
             ):
                 raise ValueError("Demo must remain loopback-only")
+        self.step = previous_step
 
     def prepare(self, web, platform, api_port, web_port):
         if self.path.exists():
@@ -162,16 +238,39 @@ class Demo:
             )
             return
         web = web.resolve()
-        if web == ROOT or not (web / "package-lock.json").is_file():
-            raise ValueError("Provide the separate kz-home-web checkout")
-        if command(["git", "status", "--porcelain", "--untracked-files=no"], cwd=web):
-            raise ValueError("Web tracked working tree must be clean")
+        self.preparing("web-checkout")
+        check_web(web)
+        self.preparing("core-assets")
+        required = ["compose.production.yaml", "compose.demo.yaml",
+                    "deploy/demo-web.Dockerfile", "deploy/mosquitto/acl",
+                    "deploy/mosquitto/start.sh", "deploy/mosquitto/mosquitto.conf",
+                    "deploy/nginx/arm64.conf"]
+        if platform == "linux/arm64":
+            required.append("compose.arm64.yaml")
+        if not all((ROOT / name).is_file() for name in required):
+            raise DemoError("core-assets")
+        proxy = proxy_config((ROOT / "deploy/nginx/arm64.conf").read_text(encoding="utf-8"))
+        if any(char in str(self.path) for char in ",\r\n'"):
+            raise DemoError("mount-path")
+        self.preparing("docker-engine")
+        if command(["docker", "info", "--format", "{{.OSType}}"], timeout=30) != "linux":
+            raise DemoError("docker-engine")
+        self.preparing("compose-version")
+        version = command(["docker", "compose", "version", "--short"], timeout=30)
+        match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?", version)
+        if match is None or tuple(map(int, match.groups())) < (2, 24, 4):
+            raise DemoError("compose-version")
         # Record only already-read tracked source. No .git, ignored env, dist or dependencies.
+        self.preparing("private-directory")
         self.path.mkdir(parents=True, mode=0o700)
         self.path.chmod(0o700)
         if os.name == "nt":
+            self.preparing("windows-sid")
             sid_rows = command(["whoami", "/user", "/fo", "csv", "/nh"]).splitlines()
             sid = next(csv.reader(sid_rows))[1]
+            if not re.fullmatch(r"S-1-(?:\d+-)+\d+", sid):
+                raise DemoError("windows-sid")
+            self.preparing("windows-acl")
             command(
                 [
                     "icacls",
@@ -183,11 +282,14 @@ class Demo:
                 ]
             )
         inputs = self.path / "mqtt"
+        self.preparing("web-copy")
         inputs.mkdir()
         revision = stage_web(web, self.path / "web")
         (self.path / "proxy.conf").write_text(
-            proxy_config((ROOT / "deploy/nginx/arm64.conf").read_text()), newline="\n"
+            proxy, encoding="utf-8", newline="\n"
         )
+
+        self.preparing("private-inputs")
 
         def secret():
             return secrets.token_hex(32)
@@ -234,6 +336,7 @@ class Demo:
             "subjectAltName=DNS:mosquitto\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n"
         )
         mount = f"type=bind,source={inputs},target=/bootstrap"
+        self.preparing("mqtt-certificates")
         command(
             [
                 "docker",
@@ -252,6 +355,7 @@ class Demo:
                 "openssl x509 -req -in /bootstrap/server.csr -CA /bootstrap/ca.crt -CAkey /bootstrap/ca.key -CAcreateserial -days 365 -extfile /bootstrap/server.ext -out /bootstrap/server.crt && chmod 644 /bootstrap/ca.crt /bootstrap/server.crt",
             ]
         )
+        self.preparing("mqtt-passwords")
         command(
             [
                 "docker",
@@ -270,6 +374,7 @@ class Demo:
                 "/bootstrap/passwords",
             ]
         )
+        self.preparing("private-inputs")
         state = {
             "version": 14,
             "project": self.project,
@@ -446,6 +551,7 @@ def main():
     args = parser.parse_args()
     if not args.run:
         parser.error("Explicit --run required")
+    demo = None
     try:
         demo = Demo(args.project)
         if args.action == "prepare":
@@ -454,7 +560,7 @@ def main():
                 or not 1024 <= args.web_port <= 65535
                 or args.api_port == args.web_port
             ):
-                raise ValueError("Use distinct unprivileged local ports")
+                raise DemoError("arguments")
             platform = "linux/arm64" if args.arm64 else "linux/amd64"
             demo.prepare(args.web, platform, args.api_port, args.web_port)
         else:
@@ -488,9 +594,17 @@ def main():
                 demo.verify()
             else:
                 demo.simulate(args.scenario)
-    except (Exception, KeyboardInterrupt):
+    except (Exception, KeyboardInterrupt) as error:
+        code = error.code if isinstance(error, DemoError) else (
+            demo.step if demo is not None else "arguments"
+        )
+        # A step can only select a fixed message; never render dynamic error text.
+        hint = DIAGNOSTICS.get(code, DIAGNOSTICS["operation"])
+        if code not in DIAGNOSTICS:
+            code = "operation"
         print(
-            "FAIL: demo operation stopped. Check documented prerequisites/ports and private installation files; no automatic reset performed."
+            f"FAIL [{code}]: {hint} Reason: {safe_reason(error)}. "
+            "No automatic reset performed."
         )
         raise SystemExit(1) from None
 
