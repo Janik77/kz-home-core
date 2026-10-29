@@ -8,3 +8,7 @@ class ConflictError(Exception):
 
 class InvalidReferenceError(Exception):
     pass
+
+
+class UnavailableError(Exception):
+    pass

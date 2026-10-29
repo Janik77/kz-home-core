@@ -438,7 +438,7 @@ def test_full_commissioned_identity_api_postgresql_tls_round_trip_and_restart(st
                 ],
             )
         )
-        assert stored["head"] == "0005_device_onboarding"
+        assert stored["head"] == "0006_command_lifecycle"
         assert stored["role_superuser"] is False
         assert stored["state"] == {"on": False} and stored["online"] is False
         assert stored["binding"] == {

@@ -70,7 +70,7 @@ def test_onboarding_migration_preserves_existing_devices_and_matches_models(
                         metadata={},
                     )
                 )
-            command.upgrade(config, "head")
+            command.upgrade(config, HEAD)
             assert (
                 connection.scalar(text("SELECT version_num FROM alembic_version"))
                 == HEAD

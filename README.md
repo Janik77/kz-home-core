@@ -1,4 +1,18 @@
-# KZ Home Core — v0.12 commissioned identity software acceptance
+# KZ Home Core — v0.15 Command Lifecycle API
+
+New opt-in HTTP relay flow: `POST /v1/devices/{device_id}/commands` with
+`{"on":true}` and an `Idempotency-Key`, then
+`GET /v1/houses/{house_id}/commands/{command_id}`. A receipt is not success:
+`applied` requires a matching MQTT v1 applied ACK **and** live correlated state.
+Only `relay` + `on_off` is supported. Residents can read results without audit
+access. Explicit migration **`0006_command_lifecycle`** is required before running
+this code; no installed database is migrated automatically. Legacy `/on`, `/off`
+and `/state` keep their dispatch-only behavior and response DTOs.
+
+[Exact requests, statuses, idempotency, timeout/restart semantics and evidence](COMMAND_LIFECYCLE_V0.15.md).
+No frontend, deployment defaults, credentials or physical firmware are changed.
+Timed out / publish-unconfirmed commands have **unknown physical outcome** and
+are never automatically resent. Read the lifecycle guide before enabling Web control.
 
 Для изолированного локального запуска в Docker без использования старых данных:
 [локальный Docker Compose](deploy/LOCAL_COMPOSE.md).

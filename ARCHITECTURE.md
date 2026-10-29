@@ -82,6 +82,22 @@ call transports directly, or bypass `DeviceService` and `StateValidator`.
 
 ## Device Gateway and future boundaries
 
+### v0.15 durable relay commands
+
+The optional `/v1` command routes delegate to CommandService/CommandRepository.
+The normalized `device_commands` table owns IDs, intent, bounded deadline and
+protocol evidence, separately from EventLog history. Submit commits before network
+I/O, with no database lock held across publish. A partial unique index enforces one
+pending new-API attempt per device; actor/house-scoped idempotency prevents a lost
+HTTP response from creating another publish. No automatic outbox replay exists.
+
+Gateway lifecycle callbacks persist matching ACK evidence and validated live state
+after DeviceService admission, independently of best-effort event logging and even
+for unchanged reports. Both are required for applied. Durable deadline checks on
+GET/ingress/submission prevent restart from losing timeout semantics. Result reads
+use device.read, not audit/event or issuance permission. Existing transport callers
+and legacy routes retain their behavior. See [the exact API](COMMAND_LIFECYCLE_V0.15.md).
+
 The v0.5 MQTT Gateway is a lifecycle-managed transport adapter. It maps Device
 Protocol v1 envelopes to normalized events, but opens database sessions only
 through application callbacks that invoke DeviceService. DeviceService remains

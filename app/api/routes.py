@@ -51,6 +51,7 @@ from app.schemas import (
 from app.security import Permission, TokenCodec
 from app.api.dependencies import build_current_user_dependency
 from app.api.onboarding import build_onboarding_router
+from app.api.commands import build_command_router
 from app.repositories.physical_device_repository import PhysicalDeviceRepository
 from app.services.onboarding_service import PhysicalBindingGuard
 from app.services.auth_service import (
@@ -125,7 +126,12 @@ def build_router(
         return authorization(session).accessible_house_ids(user.id, permission)
 
     get_current_user = build_current_user_dependency(get_session, codec)
-    router.include_router(build_onboarding_router(get_session, get_current_user, require))
+    router.include_router(
+        build_onboarding_router(get_session, get_current_user, require)
+    )
+    router.include_router(
+        build_command_router(get_session, get_current_user, require, transport)
+    )
 
     def structure(session: Session, kind: str) -> CrudService[Any]:
         houses = HouseRepository(session)
