@@ -6,6 +6,9 @@
 For the opt-in Linux ARM64 deployment overlay, HTTPS Web/API gateway, hardware
 criteria and recovery procedures, see [ARM64 deployment readiness v0.13](deploy/ARM64_DEPLOYMENT.md).
 
+Windows-first mentor demo without hardware: [инструкция v0.14](deploy/MENTOR_DEMO_RU.md).
+It uses isolated production-style TLS/auth services and explicitly labeled software simulators.
+
 Core now supports trusted physical inventory, one-time claim into a house, and
 explicit activation/deactivation/revocation through existing house RBAC. Read
 [onboarding lifecycle, API and operator boundaries](DEVICE_ONBOARDING.md) before

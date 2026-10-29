@@ -5,6 +5,12 @@ of a deployed installation. Update it when capabilities or validation change.
 
 ## Latest block — v0.12 software physical identity acceptance (2026-10-04)
 
+Later deployment work is documented separately: [v0.13 ARM64 readiness](deploy/ARM64_DEPLOYMENT.md)
+and [v0.14 mentor demo](deploy/MENTOR_DEMO_RU.md), with
+[v0.14 discovery](deploy/DEMO_DISCOVERY_V0.14.md) and
+[validation boundaries/results](deploy/DEMO_VALIDATION_V0.14.md).
+These add opt-in deployment tooling, not physical hardware certification or a new runtime API.
+
 Branch: `feature/software-device-e2e-v0.12`, starting clean at merged v0.11.
 [Operator commands and exact acceptance boundaries](simulator/PHYSICAL_ACCEPTANCE.md).
 The new opt-in `simulator.physical_acceptance --run` uses the existing commissioned
