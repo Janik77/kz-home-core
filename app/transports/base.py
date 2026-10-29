@@ -11,4 +11,5 @@ class Transport(Protocol):
         state: DeviceState,
         *,
         correlation_id: str = "",
+        command_id: str = "",
     ) -> str: ...

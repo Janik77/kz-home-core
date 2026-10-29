@@ -10,7 +10,14 @@ from fastapi.responses import JSONResponse
 from app.api import build_router
 from app.core import Settings
 from app.core.logging import configure_logging
-from app.core.errors import ConflictError, EntityNotFoundError, InvalidReferenceError
+from app.core.errors import (
+    ConflictError,
+    EntityNotFoundError,
+    InvalidReferenceError,
+    UnavailableError,
+)
+from app.repositories.command_repository import CommandRepository
+from app.services.command_service import CommandService
 from app.db import create_db_engine, create_session_factory, session_dependency
 from app.events import Event, EventBus
 from app.models import UserORM
@@ -98,6 +105,18 @@ def create_app(
                     DeviceRepository(session), RoomRepository(session), event_bus
                 ).require_house(house_id, device_id)
 
+        async def command_ack(house_id, device_id, envelope, retained):
+            with session_factory() as session:
+                CommandService(CommandRepository(session)).ack(
+                    house_id, device_id, envelope, retained
+                )
+
+        async def command_state(house_id, device_id, envelope, retained):
+            with session_factory() as session:
+                CommandService(CommandRepository(session)).state(
+                    house_id, device_id, envelope, retained
+                )
+
         gateway = MQTTGateway(
             client,
             event_bus,
@@ -105,6 +124,8 @@ def create_app(
             receive_status,
             validate_identity,
             sleep=mqtt_sleep,
+            command_ack_handler=command_ack,
+            command_state_handler=command_state,
         )
 
     command_transport: Transport | None = gateway
@@ -208,7 +229,8 @@ def create_app(
             status_code=503 if reason else 200,
             content=(
                 {"status": "not_ready", "reason": reason}
-                if reason else {"status": "ready"}
+                if reason
+                else {"status": "ready"}
             ),
             headers={"Cache-Control": "no-store"},
         )
@@ -228,6 +250,10 @@ def create_app(
         _, error: InvalidReferenceError
     ) -> JSONResponse:
         return JSONResponse(status_code=422, content={"detail": str(error)})
+
+    @application.exception_handler(UnavailableError)
+    async def unavailable_handler(_, error: UnavailableError) -> JSONResponse:
+        return JSONResponse(status_code=503, content={"detail": str(error)})
 
     @application.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket) -> None:

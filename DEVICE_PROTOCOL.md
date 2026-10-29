@@ -568,10 +568,12 @@ The runtime does not yet implement every normative requirement above:
 
 - Capabilities are existing named strings with field validators, not the full
   declarative descriptor map. Sensor numeric validation is incomplete.
-- DeviceService discards returned command IDs. Core records ACKs but does not
-  track pending commands, classify unknown IDs, enforce outcome progression,
-  retry commands or maintain durable deduplication. HTTP command responses expose
-  neither command ID nor correlation ID. Acceptance matches observed MQTT IDs.
+- Legacy DeviceService/HTTP callers still discard returned command IDs and keep
+  dispatch-only responses. The separate [v0.15 relay Command Lifecycle API](COMMAND_LIFECYCLE_V0.15.md)
+  persists IDs/intent before publish and requires scoped applied ACK plus live
+  correlated state. It ignores unknown/late/retained evidence for lifecycle
+  completion and preserves terminal results. It does not retry, provide an outbox,
+  guarantee delivery or add durable device deduplication. No v1 wire field changes.
 - State timestamps/retained flags do not enforce freshness; heartbeat expiry,
   independent receipt-time availability and telemetry rate limiting are absent.
 - Core validates the registered topic-house/device association, but it does not

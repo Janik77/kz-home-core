@@ -53,6 +53,12 @@ class MQTTGateway:
         sleep: Sleep = asyncio.sleep,
         initial_backoff: float = 1.0,
         maximum_backoff: float = 30.0,
+        command_ack_handler: Callable[[str, str, AckEnvelope, bool], Awaitable[None]]
+        | None = None,
+        command_state_handler: Callable[
+            [str, str, StateEnvelope, bool], Awaitable[None]
+        ]
+        | None = None,
     ) -> None:
         self.client = client
         self.event_bus = event_bus
@@ -62,6 +68,8 @@ class MQTTGateway:
         self.sleep = sleep
         self.initial_backoff = initial_backoff
         self.maximum_backoff = maximum_backoff
+        self.command_ack_handler = command_ack_handler
+        self.command_state_handler = command_state_handler
         if not 0 < initial_backoff <= maximum_backoff:
             raise ValueError("MQTT backoff must be positive and bounded")
         self._task: asyncio.Task[None] | None = None
@@ -131,9 +139,10 @@ class MQTTGateway:
         state: DeviceState,
         *,
         correlation_id: str = "",
+        command_id: str = "",
     ) -> str:
         correlation_id = correlation_id or str(uuid4())
-        command_id = str(uuid4())
+        command_id = command_id or str(uuid4())
         envelope = CommandEnvelope(
             protocol_version=PROTOCOL_VERSION,
             command_id=command_id,
@@ -171,12 +180,19 @@ class MQTTGateway:
         if raw.get("protocol_version", PROTOCOL_VERSION) != PROTOCOL_VERSION:
             raise ValueError("Unsupported MQTT protocol version")
         try:
-            await self._route(parsed.house_id, parsed.device_id, parsed.kind, raw)
+            await self._route(
+                parsed.house_id, parsed.device_id, parsed.kind, raw, message.retained
+            )
         except ValidationError as error:
             raise ValueError("Invalid MQTT payload envelope") from error
 
     async def _route(
-        self, house_id: str, device_id: str, kind: TopicKind, raw: dict[str, Any]
+        self,
+        house_id: str,
+        device_id: str,
+        kind: TopicKind,
+        raw: dict[str, Any],
+        retained: bool = False,
     ) -> None:
         await self.identity_handler(house_id, device_id)
         if kind is TopicKind.STATE:
@@ -187,6 +203,10 @@ class MQTTGateway:
                 envelope.state,
                 envelope.correlation_id,
             )
+            if self.command_state_handler is not None:
+                await self.command_state_handler(
+                    house_id, device_id, envelope, retained
+                )
             return
         if kind is TopicKind.STATUS:
             envelope = StatusEnvelope.model_validate(raw)
@@ -211,6 +231,8 @@ class MQTTGateway:
             return
         if kind is TopicKind.ACK:
             envelope = AckEnvelope.model_validate(raw)
+            if self.command_ack_handler is not None:
+                await self.command_ack_handler(house_id, device_id, envelope, retained)
             await self.event_bus.publish(
                 Event(
                     type="device_ack_received",

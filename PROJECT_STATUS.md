@@ -3,7 +3,41 @@
 Canonical development handoff. This is a repository snapshot, not certification
 of a deployed installation. Update it when capabilities or validation change.
 
-## Latest block — v0.12 software physical identity acceptance (2026-10-04)
+## Latest block — v0.15 Command Lifecycle API
+
+The [v0.15 contract and validation](COMMAND_LIFECYCLE_V0.15.md) adds a separate
+versioned relay-only receipt/result flow. The command row is committed before
+MQTT, with immutable IDs, desired boolean, hashed idempotency key and a 30-second
+deadline. PostgreSQL row locks and a partial unique index prevent multiple pending
+new-API commands for one device. A matching applied ACK alone is insufficient:
+validated non-retained state with the same correlation must also be received.
+Unchanged state can confirm; retained bootstrap, unknown IDs, wrong scopes and late
+evidence cannot turn a timed-out/failed record into success.
+
+Head is now **`0006_command_lifecycle`**. No startup migration, new dependency,
+protocol wire change, Web edit or installed-stack update. Legacy routes retain
+DeviceRead/dispatch-only semantics. Results require `device.read`; submission
+requires `device.control`; residents need no expanded event/audit access.
+
+Validation: **350 passed, 13 skipped** in the normal suite; Ruff passed. The new
+opt-in real PostgreSQL/Core/Mosquitto TLS/software relay acceptance passed
+**1 test in 55.72 s**, including concurrent idempotency, ACK/state, unchanged OFF,
+resident/IDOR, Core/PostgreSQL restart, durable timeout, no resend and late result.
+Existing containers and all 17 initial volumes were preserved; fixture resources
+were removed. Physical hardware, LAN/ARM64 runtime and existing installations
+were not tested or changed. Full details and remaining guarantees are in the guide.
+
+This is bounded durable outcome tracking for the new API, not exactly-once
+delivery, a general command outbox or heartbeat/freshness implementation. No retry
+worker exists. Queued attempts interrupted by process loss expire from their
+stored deadline on reads/ingress/new submission; they are not resent. A timeout
+is unknown execution, not proof of OFF or cancellation. Other controllers and
+legacy automation may subsequently change current state.
+
+Next minimal milestone: adapt Web v0.6 to the actual receipt/result DTOs and
+relay-only UI, with explicit idempotency, pending, deadline and unknown handling.
+
+## Previous block — v0.12 software physical identity acceptance (2026-10-04)
 
 Later deployment work is documented separately: [v0.13 ARM64 readiness](deploy/ARM64_DEPLOYMENT.md)
 and [v0.14 mentor demo](deploy/MENTOR_DEMO_RU.md), with
