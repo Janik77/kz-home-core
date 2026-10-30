@@ -3,8 +3,8 @@
 This block implements Core inventory, ownership binding and an admission gate.
 It does not issue MQTT credentials, configure a broker, provision Wi-Fi, or change
 Device Protocol v1. The v0.8 software E2E remains verified and merged. The separate
-ESP32-C6 firmware v0.9 is implemented/merged according to project context; physical
-hardware acceptance is deferred until hardware is available.
+firmware v0.10.0 supports separate classic ESP32-WROOM-32 and ESP32-C6 builds;
+physical hardware acceptance remains a separate, unverified commissioning step.
 
 v0.11 adds a separate [operator commissioning workflow](DEVICE_COMMISSIONING.md):
 local broker ACL tooling, interactive password-file administration, isolation
@@ -49,11 +49,66 @@ a human access/refresh token. Unclaimed inventory has no house or runtime Device
 and cannot use normal MQTT topics. Claim codes currently have no expiry/recovery
 API; protect them until claim and do not import devices with compromised codes.
 
-The sole approved profile `esp32-c6-relay-v1` creates a `relay` with `on_off`.
+The approved physical profiles are:
+
+| Core inventory `hardware_model` | Inspected hardware | Firmware v0.10.0 board / target | Informational firmware metadata |
+|---|---|---|---|
+| `esp32-relay-v1` | Classic ESP32-WROOM-32 | `esp32_wroom` / `esp32` | `kz-relay-esp32-wroom` |
+| `esp32-c6-relay-v1` | ESP32-C6 | `esp32c6` / `esp32c6` | `kz-relay-esp32c6` |
+
+Both create a `relay` with only `on_off`, mapped to wire state `{"on": boolean}`.
+Firmware metadata strings are not inventory profile aliases. Core trusts the
+operator's inspected inventory; status metadata cannot select or replace a
+profile and is not hardware attestation. Unknown profile identifiers are rejected.
 This is a reviewed logical v1 contract, not a claim of electrical/firmware hardware
 validation. Claimants cannot supply capabilities, observed state, online status,
 metadata, protocol version, or a replacement device ID. Extend approved profiles
 in server code with explicit review/tests when another model is supported.
+
+## Classic ESP32 manual commissioning (Core v0.21)
+
+No database migration is added by v0.21. Before commissioning, complete these
+manual prerequisites in the intended installation:
+
+1. Verify the actual ESP32-WROOM-32 identity, board, flash layout, relay wiring,
+   GPIO and polarity against Firmware v0.10.0. Classic GPIO26 is provisional;
+   approval of this Core profile does not verify electrical behavior. Use the
+   classic `esp32_wroom` build, never the C6 binary/profile for this board.
+2. Choose a new globally unique physical `device_id` and verified `hardware_id`.
+   Do not reuse demo, virtual relay, E2E or simulator IDs/accounts. Registration
+   rejects existing runtime/inventory identities; claim never adopts them.
+   Use firmware-compatible house/device IDs: 1–64 ASCII `[A-Za-z0-9_-]`
+   characters, starting with a letter or digit (the shared Core/firmware subset).
+3. With trusted operator access, existing schema `0005_device_onboarding` ready,
+   and a securely prepared one-time claim code, register through the hidden prompt:
+
+   ```text
+   python -m app.register_physical_device --device-id physical_esp32_001 --hardware-id verified_serial_001 --hardware-model esp32-relay-v1
+   ```
+
+   These are illustrative IDs; independently verify uniqueness and the serial.
+   Core does not generate codes or create credentials. Use the secure claim-code
+   generation/handoff rules above; never pass a code as a shell argument.
+4. An authenticated owner/installer with `device.onboard` must claim into a room
+   in the intended house. Check the returned permanent IDs and exact model.
+   The device remains offline in `provisioning` with empty observed state.
+5. Follow [operator commissioning](DEVICE_COMMISSIONING.md) to prepare a separate
+   per-device broker account, public CA/hostname verification and exact directional
+   ACLs: read its own `set`; write its own `state`, `ack`, `status` under
+   `kzhome/v1/{house_id}/{device_id}/`. No wildcards or telemetry grant. Verify an
+   approved LAN TLS route/firewall, negative ACL isolation and revocation procedure.
+6. Securely supply firmware Wi-Fi, broker DNS/TLS port, public CA, unique MQTT
+   credentials, returned house/device IDs and reachable SNTP configuration.
+   Firmware client ID is `kz-{device_id}`. Core performs none of this setup.
+   Protect local configuration/build artifacts; no default credentials apply.
+7. Only after external broker access is prepared, the authorized owner/installer
+   explicitly activates with `{"broker_access_confirmed": true}`. This attests
+   preparation, not connectivity or physical acceptance. Verify actual state,
+   command/ACK flow and safe electrical operation separately before use.
+
+HTTPS, request/log redaction and claim/login rate limiting remain installation
+prerequisites. This change performs no flashing, broker provisioning, deployment
+or physical acceptance and leaves existing protocol/command lifecycle unchanged.
 
 ## Lifecycle and ownership
 

@@ -18,7 +18,10 @@ from pydantic import TypeAdapter
 
 # Trusted server-side profile. It describes a v1 relay contract, not verified
 # electrical hardware. Other profiles require explicit review and tests.
-PROFILES = {"esp32-c6-relay-v1": ("relay", ["on_off"])}
+PROFILES = {
+    "esp32-c6-relay-v1": ("relay", ["on_off"]),
+    "esp32-relay-v1": ("relay", ["on_off"]),  # Classic ESP32-WROOM-32.
+}
 
 
 def claim_digest(code: str) -> str:

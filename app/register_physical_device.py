@@ -17,7 +17,9 @@ def main():
     parser.add_argument("--device-id", required=True)
     parser.add_argument("--hardware-id", required=True)
     parser.add_argument(
-        "--hardware-model", choices=("esp32-c6-relay-v1",), required=True
+        "--hardware-model",
+        choices=("esp32-c6-relay-v1", "esp32-relay-v1"),
+        required=True,
     )
     args = parser.parse_args()
     engine = None

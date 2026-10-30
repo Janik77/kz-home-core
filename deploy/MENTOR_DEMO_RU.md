@@ -1,5 +1,11 @@
 # KZ Home v0.14 — демо для технического наставника
 
+**Core v0.21 — физическое реле:** classic ESP32-WROOM-32 использует профиль
+`esp32-relay-v1`; ESP32-C6 — `esp32-c6-relay-v1`. Обязательные ручные шаги:
+[inventory, claim, отдельные MQTT credentials/ACL/TLS и activation](../DEVICE_ONBOARDING.md#classic-esp32-manual-commissioning-core-v021).
+Не заменяйте demo/simulator identity физической платой. Этот onboarding не
+прошивает плату и не меняет существующую demo-установку.
+
 **Обновление v0.20:** для существующей установки используйте проверенную процедуру
 [safe upgrade и постоянного виртуального реле](../docs/DEMO_UPGRADE_V0.20.md).
 Ниже сохранена историческая инструкция v0.14. Старый `update` теперь отклоняется;
