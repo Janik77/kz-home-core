@@ -28,6 +28,13 @@ general expression language in the engine.
 
 ## Human identity and authorization
 
+v0.17 exposes `GET /v1/houses/{house_id}/me/permissions` through the existing
+authenticated house.read guard. Its minimal DTO contains house_id and the sorted
+Permission identifiers accepted by AuthorizationService.has_permission for the
+current membership. There is no parallel role map, client-selected principal or
+permission cache. Commands independently authorize their actual device house on
+every request. See [contract and race boundaries](HOUSE_PERMISSIONS_V0.17.md).
+
 Authentication follows the same API → service → repository → database boundary.
 Users have normalized unique email addresses and Argon2id hashes, never plaintext
 passwords. Short-lived signed access JWTs identify a human; refresh JWT identifiers

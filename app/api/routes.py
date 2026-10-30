@@ -61,6 +61,7 @@ from app.services.auth_service import (
     MembershipService,
 )
 from app.models import UserORM
+from app.schemas.auth import HousePermissionsRead
 from app.services.automation_service import AutomationService
 from app.services.crud_service import CrudService
 from app.services.device_service import DeviceService
@@ -132,6 +133,28 @@ def build_router(
     router.include_router(
         build_command_router(get_session, get_current_user, require, transport)
     )
+
+    @router.get(
+        "/v1/houses/{house_id}/me/permissions", response_model=HousePermissionsRead
+    )
+    def my_house_permissions(
+        house_id: str,
+        response: Response,
+        session: Session = Depends(get_session),
+        user: UserORM = Depends(get_current_user),
+    ):
+        require(session, user, house_id, Permission.HOUSE_READ)
+        service = authorization(session)
+        membership = service.get_house_membership(user.id, house_id)
+        response.headers["Cache-Control"] = "no-store"
+        return HousePermissionsRead(
+            house_id=house_id,
+            permissions=sorted(
+                permission
+                for permission in Permission
+                if service.has_permission(membership, permission)
+            ),
+        )
 
     def structure(session: Session, kind: str) -> CrudService[Any]:
         houses = HouseRepository(session)

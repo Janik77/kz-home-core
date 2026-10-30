@@ -3,6 +3,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.security import Permission
+
+
+class HousePermissionsRead(BaseModel):
+    house_id: str
+    permissions: list[Permission]
+
 
 class LoginRequest(BaseModel):
     email: str = Field(min_length=3, max_length=320)
