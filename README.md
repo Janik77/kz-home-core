@@ -1,4 +1,9 @@
-# KZ Home Core — v0.15 Command Lifecycle API
+# KZ Home Core — v0.17 House Permissions API
+
+Authenticated `GET /v1/houses/{house_id}/me/permissions` returns the current user's
+server-calculated house permissions through the existing RBAC policy. No role
+grants or command enforcement changed; no new migration or dependency is needed.
+See [the exact v0.17 contract and verification](HOUSE_PERMISSIONS_V0.17.md).
 
 New opt-in HTTP relay flow: `POST /v1/devices/{device_id}/commands` with
 `{"on":true}` and an `Idempotency-Key`, then

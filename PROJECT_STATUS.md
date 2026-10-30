@@ -3,7 +3,21 @@
 Canonical development handoff. This is a repository snapshot, not certification
 of a deployed installation. Update it when capabilities or validation change.
 
-## Latest block — v0.15 Command Lifecycle API
+## Latest block — v0.17 House Permissions API
+
+The [v0.17 contract](HOUSE_PERMISSIONS_V0.17.md) adds a read-only current-user
+permission endpoint for a selected house, using existing authentication,
+membership lookup, house.read enforcement and AuthorizationService.has_permission.
+It enables a future Web integration to establish device.control for every existing
+role without owner-only membership enumeration. No grants, migrations, dependencies,
+Web files or installed deployment settings changed. Command authorization remains
+independent; v0.15 confirmation/idempotency/deadline semantics are unchanged.
+
+Verification results and limitations are recorded in the v0.17 guide. Next smallest
+milestone: consume the endpoint in Web with per-session/house isolation and test
+owner/resident/installer/technician control eligibility and revocation.
+
+## Previous block — v0.15 Command Lifecycle API
 
 The [v0.15 contract and validation](COMMAND_LIFECYCLE_V0.15.md) adds a separate
 versioned relay-only receipt/result flow. The command row is committed before
