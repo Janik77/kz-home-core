@@ -1,5 +1,9 @@
 # KZ Home Core — v0.17 House Permissions API
 
+Demo v0.20 adds explicit backed-up/resumable upgrades and a persistent TLS software
+relay using the existing protocol. See [audit, Windows procedure, acceptance and
+recovery limits](docs/DEMO_UPGRADE_V0.20.md) before upgrading a prepared demo.
+
 Authenticated `GET /v1/houses/{house_id}/me/permissions` returns the current user's
 server-calculated house permissions through the existing RBAC policy. No role
 grants or command enforcement changed; no new migration or dependency is needed.
