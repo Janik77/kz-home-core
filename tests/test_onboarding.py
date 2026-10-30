@@ -3,16 +3,18 @@
 import asyncio
 import json
 from secrets import token_urlsafe
+from typing import get_args
 from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core import Settings
-from app.core.errors import ConflictError
+from app.core.errors import ConflictError, InvalidReferenceError
 from app.db import Base
 from app.events import EventBus
 from app.models import (
@@ -28,16 +30,16 @@ from app.models import (
 from app.repositories import DeviceRepository, RoomRepository
 from app.repositories.physical_device_repository import PhysicalDeviceRepository
 from app.schemas import DeviceCreate
-from app.schemas.onboarding import DeviceClaim, InventoryRegistration
+from app.schemas.onboarding import DeviceClaim, HardwareModel, InventoryRegistration
 from app.security import TokenCodec
 from app.services.device_service import DeviceService
-from app.services.onboarding_service import OnboardingService
+from app.services.onboarding_service import PROFILES, OnboardingService
 from app.transports import FakeMQTTClient
 from app.transports.mqtt_client import MQTTMessage
 
 
-@pytest.fixture
-def onboarding(tmp_path, monkeypatch):
+@pytest.fixture(params=["esp32-c6-relay-v1", "esp32-relay-v1"])
+def onboarding(tmp_path, monkeypatch, request):
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
     from app.main import create_app
@@ -112,7 +114,7 @@ def onboarding(tmp_path, monkeypatch):
     registration = InventoryRegistration(
         device_id="physical1",
         hardware_id="serial-c6-001",
-        hardware_model="esp32-c6-relay-v1",
+        hardware_model=request.param,
         claim_code=code,
     )
     with Session(engine) as session:
@@ -194,6 +196,7 @@ def test_claim_creates_offline_profile_consumes_code_and_audits(onboarding, role
     )
     with Session(engine) as session:
         item = session.get(PhysicalDeviceORM, "physical1")
+        assert result["hardware_model"] == item.hardware_model
         assert item.claim_code_hash is None and item.bound_device_id == "physical1"
         log = session.scalar(
             select(EventLogORM).where(
@@ -436,6 +439,7 @@ def test_active_physical_command_ack_state_status_and_deactivation(onboarding):
     topic, raw, qos, retained = wire.published[-1]
     assert topic == "kzhome/v1/a/physical1/set" and (qos, retained) == (1, False)
     sent = json.loads(raw)
+    assert sent["state"] == {"on": True}
     for kind, body in (
         (
             "ack",
@@ -763,3 +767,108 @@ def test_cli_validation_failure_never_prints_claim_code(monkeypatch, capsys):
         cli.main()
     assert caught.value.code == 1
     assert "synthetic-secret" not in capsys.readouterr().out
+
+
+def test_approved_profiles_match_inventory_allowlist():
+    assert (
+        set(get_args(HardwareModel))
+        == set(PROFILES)
+        == {"esp32-relay-v1", "esp32-c6-relay-v1"}
+    )
+    assert all(profile == ("relay", ["on_off"]) for profile in PROFILES.values())
+
+
+@pytest.mark.parametrize("model", ["esp32-relay-v1", "esp32-c6-relay-v1"])
+def test_cli_registers_explicit_profile_without_runtime_or_broker_provisioning(
+    onboarding, monkeypatch, model, capsys
+):
+    from app import register_physical_device as cli
+
+    _, engine, _, _, wire, _ = onboarding
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "register_physical_device",
+            "--device-id",
+            "physical2",
+            "--hardware-id",
+            "serial2",
+            "--hardware-model",
+            model,
+        ],
+    )
+    monkeypatch.setattr(cli, "read_password", lambda *args: "X" * 43)
+    monkeypatch.setattr(cli, "create_db_engine", lambda *args: engine)
+    monkeypatch.setattr(cli.ReadinessService, "check", lambda *args: {})
+    cli.main()
+    with Session(engine) as session:
+        item = session.get(PhysicalDeviceORM, "physical2")
+        assert item.hardware_model == model and item.status == "unprovisioned"
+        assert item.house_id is None and item.bound_device_id is None
+        assert session.get(DeviceORM, "physical2") is None
+    assert wire.published == []
+    output = capsys.readouterr().out
+    assert "operator-managed" in output and "X" * 43 not in output
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "unknown",
+        "esp32",
+        "ESP32-relay-v1",
+        "esp32-relay-v2",
+        "kz-relay-esp32-wroom",
+        "kz-relay-esp32c6",
+        "esp32-c6-relay-v1 ",
+    ],
+)
+def test_inventory_rejects_unsupported_models_and_metadata_aliases(model):
+    with pytest.raises(ValidationError):
+        InventoryRegistration(
+            device_id="physical",
+            hardware_id="serial",
+            hardware_model=model,
+            claim_code="X" * 43,
+        )
+
+
+@pytest.mark.parametrize("model", ["esp32-relay-v1", "esp32-c6-relay-v1"])
+def test_claim_cannot_select_or_replace_trusted_model(onboarding, model):
+    client, engine, headers, code, *_ = onboarding
+    result = client.post(
+        "/houses/a/device-claims",
+        headers=headers["owner"],
+        json=claim_body(code, hardware_model=model),
+    )
+    assert result.status_code == 422
+    with Session(engine) as session:
+        assert session.get(PhysicalDeviceORM, "physical1").status == "unprovisioned"
+        assert session.get(DeviceORM, "physical1") is None
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        {"on": 1},
+        {"on": "true"},
+        {"on": None},
+        {"on_off": True},
+        {"on": True, "brightness": 50},
+        {},
+    ],
+)
+def test_physical_relay_rejects_invalid_command_state(onboarding, state):
+    client, engine, _, _, wire, _ = onboarding
+    claim_device(onboarding)
+    assert activate(onboarding).status_code == 200
+    with Session(engine) as session:
+        service = DeviceService(
+            DeviceRepository(session), RoomRepository(session), EventBus()
+        )
+        service.transport = AsyncMock()
+        with pytest.raises(InvalidReferenceError):
+            asyncio.run(service.update_state("physical1", state))
+        service.transport.send_command.assert_not_awaited()
+        assert session.get(DeviceORM, "physical1").state == {}
+    assert wire.published == []

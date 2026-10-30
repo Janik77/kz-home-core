@@ -7,6 +7,12 @@ wire fields or firmware changes are needed. Hardware acceptance remains deferred
 
 ## Identity and security boundary
 
+Core v0.21 supports physical `esp32-relay-v1` (classic ESP32-WROOM-32) and
+`esp32-c6-relay-v1` (ESP32-C6). Both use this same one-relay procedure and v1 ACLs.
+Select the profile from inspected hardware, not from the USB connector or demo
+identity; follow the [exact manual prerequisites](DEVICE_ONBOARDING.md#classic-esp32-manual-commissioning-core-v021).
+The C6 IDs below are examples, not defaults for a classic board.
+
 The installed Core must contain v0.10 onboarding, with the explicit
 `0005_device_onboarding` migration applied and `/ready` passing. Follow README's
 existing image/deployment/migration steps first; a repository merge does not

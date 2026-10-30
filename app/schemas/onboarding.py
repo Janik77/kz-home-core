@@ -11,7 +11,7 @@ TopicID = Annotated[
 HardwareID = Annotated[
     str, Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
 ]
-HardwareModel = Literal["esp32-c6-relay-v1"]
+HardwareModel = Literal["esp32-c6-relay-v1", "esp32-relay-v1"]
 Lifecycle = Literal["provisioning", "active", "inactive", "revoked"]
 
 
