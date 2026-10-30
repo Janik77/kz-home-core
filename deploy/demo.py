@@ -15,6 +15,8 @@ import urllib.request
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 # Only these developer-owned messages may reach the failure output. Never print
 # exception text, subprocess args/stdout/stderr, environment or private JSON.
@@ -38,6 +40,7 @@ DIAGNOSTICS = {
     "mqtt-passwords": "Password-file helper failed. Check access to eclipse-mosquitto:2, bind-mount permissions and free space. Never display the password file.",
     "isolation-check": "Compose configuration or resource isolation check failed. Check local config with --quiet and Docker availability; preserve existing resources and never attach non-demo volumes.",
     "operation": "Demo operation failed. Check the guide and local prerequisites; command output and private contents are intentionally withheld.",
+    "upgrade": "Upgrade stopped safely. Preserve backups, upgrade.pending.json and all volumes. Run upgrade-check or resume upgrade with the same reviewed source; never reset or regenerate private inputs.",
 }
 
 
@@ -183,6 +186,9 @@ class Demo:
         self.step = previous_step
 
     def dc(self, *args, input_text=None):
+        return command(self.argv(*args), env=self.env, input_text=input_text)
+
+    def argv(self, *args):
         if self.state is None:
             self.load()
         files = ["compose.production.yaml"]
@@ -199,7 +205,7 @@ class Demo:
         ]
         for filename in files:
             argv += ["-f", filename]
-        return command([*argv, *args], env=self.env, input_text=input_text)
+        return [*argv, *args]
 
     def guard(self):
         """Never attach an existing non-demo volume or fixed-name container."""
@@ -241,19 +247,29 @@ class Demo:
         self.preparing("web-checkout")
         check_web(web)
         self.preparing("core-assets")
-        required = ["compose.production.yaml", "compose.demo.yaml",
-                    "deploy/demo-web.Dockerfile", "deploy/mosquitto/acl",
-                    "deploy/mosquitto/start.sh", "deploy/mosquitto/mosquitto.conf",
-                    "deploy/nginx/arm64.conf"]
+        required = [
+            "compose.production.yaml",
+            "compose.demo.yaml",
+            "deploy/demo-web.Dockerfile",
+            "deploy/mosquitto/acl",
+            "deploy/mosquitto/start.sh",
+            "deploy/mosquitto/mosquitto.conf",
+            "deploy/nginx/arm64.conf",
+        ]
         if platform == "linux/arm64":
             required.append("compose.arm64.yaml")
         if not all((ROOT / name).is_file() for name in required):
             raise DemoError("core-assets")
-        proxy = proxy_config((ROOT / "deploy/nginx/arm64.conf").read_text(encoding="utf-8"))
+        proxy = proxy_config(
+            (ROOT / "deploy/nginx/arm64.conf").read_text(encoding="utf-8")
+        )
         if any(char in str(self.path) for char in ",\r\n'"):
             raise DemoError("mount-path")
         self.preparing("docker-engine")
-        if command(["docker", "info", "--format", "{{.OSType}}"], timeout=30) != "linux":
+        if (
+            command(["docker", "info", "--format", "{{.OSType}}"], timeout=30)
+            != "linux"
+        ):
             raise DemoError("docker-engine")
         self.preparing("compose-version")
         version = command(["docker", "compose", "version", "--short"], timeout=30)
@@ -285,9 +301,7 @@ class Demo:
         self.preparing("web-copy")
         inputs.mkdir()
         revision = stage_web(web, self.path / "web")
-        (self.path / "proxy.conf").write_text(
-            proxy, encoding="utf-8", newline="\n"
-        )
+        (self.path / "proxy.conf").write_text(proxy, encoding="utf-8", newline="\n")
 
         self.preparing("private-inputs")
 
@@ -409,6 +423,8 @@ class Demo:
     def start(self, *, build=False):
         self.guard()
         if build:
+            if self.dc("ps", "-a", "-q", "core"):
+                raise DemoError("upgrade")
             print(
                 "Building Core and the staged Web source; this can take several minutes."
             )
@@ -462,20 +478,70 @@ class Demo:
         self.verify()
 
     def update(self):
+        raise DemoError("upgrade")  # Legacy unsafe update is superseded explicitly.
+
+    def upgrade_check(self, web):
+        from deploy.demo_upgrade import check
+
+        return check(self, web)
+
+    def backup(self):
+        from deploy.demo_upgrade import backup, operation_lock
+
+        with operation_lock(self):
+            return backup(self)
+
+    def upgrade(self, web):
+        from deploy.demo_upgrade import upgrade
+
+        return upgrade(self, web)
+
+    def virtual_relay(self, mode):
         self.guard()
-        # Stage a fresh context rather than deleting/copying over the old snapshot.
-        context = self.path / ("web-" + uuid4().hex)
-        revision = stage_web(Path(self.state["web_source"]), context)
-        self.state["web_revision"] = revision
-        self.state["env"]["DEMO_WEB_CONTEXT"] = str(context).replace("\\", "/")
-        private_write(self.path / "state.json", json.dumps(self.state))
-        private_write(
-            self.path / "compose.env",
-            "\n".join(f"{key}='{value}'" for key, value in self.state["env"].items())
-            + "\n",
+        name = self.project + "-virtual-relay"
+        result = subprocess.run(
+            ["docker", "container", "inspect", name], capture_output=True
         )
-        self.load()
-        self.start(build=True)
+        if result.returncode == 0:
+            raise DemoError("upgrade")  # Never silently replace a running simulator.
+        secret = json.loads((self.path / "simulation.json").read_text())["relay"]
+        config = json.dumps({"password": secret, "mode": mode})
+        print(
+            "Virtual relay running in foreground; use virtual-relay-stop from another terminal. Software only.",
+            flush=True,
+        )
+        command(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "-i",
+                "--init",
+                "--name",
+                name,
+                "--label",
+                "kzhome.demo.virtual=" + self.project,
+                "--network",
+                self.project + "_backend",
+                "-e",
+                "KZHOME_DEMO_ENABLED=1",
+                "--mount",
+                f"type=bind,source={self.path / 'mqtt/ca.crt'},target=/run/mqtt/ca.crt,readonly",
+                self.state["env"]["DEMO_CORE_IMAGE"],
+                "python",
+                "-m",
+                "app.demo_relay",
+            ],
+            input_text=config,
+            timeout=86400,
+        )
+
+    def virtual_relay_stop(self):
+        name = self.project + "-virtual-relay"
+        item = json.loads(command(["docker", "inspect", name]))[0]
+        if item["Config"]["Labels"].get("kzhome.demo.virtual") != self.project:
+            raise DemoError("upgrade")
+        command(["docker", "stop", "--time", "10", name])
 
     def verify(self):
         self.guard()
@@ -535,6 +601,11 @@ def main():
             "simulate",
             "verify",
             "credentials",
+            "upgrade-check",
+            "backup",
+            "upgrade",
+            "virtual-relay",
+            "virtual-relay-stop",
         ),
     )
     parser.add_argument("--project", default="kzhome-demo")
@@ -543,6 +614,9 @@ def main():
     parser.add_argument("--api-port", type=int, default=18080)
     parser.add_argument("--web-port", type=int, default=18081)
     parser.add_argument("--scenario", choices=("relay", "automation"), default="relay")
+    parser.add_argument(
+        "--relay-mode", choices=("apply", "fail", "timeout"), default="apply"
+    )
     parser.add_argument(
         "--run",
         action="store_true",
@@ -588,6 +662,20 @@ def main():
                 demo.start()
             elif args.action == "update":
                 demo.update()
+            elif args.action == "upgrade-check":
+                demo.upgrade_check(args.web)
+                print("PASS: upgrade prerequisites; no deployment changes")
+            elif args.action == "backup":
+                demo.backup()
+                print(
+                    "PASS: private backup retained under this project's backups directory"
+                )
+            elif args.action == "upgrade":
+                demo.upgrade(args.web)
+            elif args.action == "virtual-relay":
+                demo.virtual_relay(args.relay_mode)
+            elif args.action == "virtual-relay-stop":
+                demo.virtual_relay_stop()
             elif args.action == "bootstrap":
                 demo.bootstrap()
             elif args.action == "verify":
@@ -595,8 +683,10 @@ def main():
             else:
                 demo.simulate(args.scenario)
     except (Exception, KeyboardInterrupt) as error:
-        code = error.code if isinstance(error, DemoError) else (
-            demo.step if demo is not None else "arguments"
+        code = (
+            error.code
+            if isinstance(error, DemoError)
+            else (demo.step if demo is not None else "arguments")
         )
         # A step can only select a fixed message; never render dynamic error text.
         hint = DIAGNOSTICS.get(code, DIAGNOSTICS["operation"])
