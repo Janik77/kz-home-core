@@ -7,6 +7,7 @@ services:
     platform: ${DEMO_PLATFORM:?Run demo.py prepare}
     environment:
       KZHOME_DEMO_ENABLED: "1"
+      MQTT_SOFTWARE_DEVICES: '[["e2e_house","e2e_relay"]]'
     ports: !override
       - "127.0.0.1:${DEMO_API_PORT:?Run demo.py prepare}:8000"
     volumes:

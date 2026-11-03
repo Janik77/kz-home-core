@@ -33,7 +33,7 @@ def test_command_migration_matches_models_and_preserves_old_data(tmp_path, upgra
             command.upgrade(config, "head")
             assert (
                 connection.scalar(text("select version_num from alembic_version"))
-                == "0006_command_lifecycle"
+                == "0007_control_authority"
             )
             if upgrade:
                 assert (

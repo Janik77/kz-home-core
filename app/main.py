@@ -41,6 +41,9 @@ from app.services.automation_service import AutomationService
 from app.services.device_service import DeviceService
 from app.services.event_log_service import EventLogService
 from app.services.readiness_service import ReadinessService
+from app.repositories.physical_device_repository import PhysicalDeviceRepository
+from app.services.onboarding_service import PhysicalBindingGuard
+from app.services.control_authority import ControlAuthority
 from app.transports import AiomqttClient, MQTTClient, MQTTGateway, Transport
 from app.websocket import ConnectionManager
 from simulator.virtual_device import VirtualDeviceSimulator, stop_simulator
@@ -66,6 +69,7 @@ def create_app(
     connections = ConnectionManager()
     automation_tasks: set[asyncio.Task[None]] = set()
     gateway: MQTTGateway | None = None
+    control_authority = ControlAuthority()  # Unqualified clock and closed gate by default.
 
     if settings.mqtt_enabled:
         client = mqtt_client or AiomqttClient(
@@ -107,15 +111,34 @@ def create_app(
 
         async def command_ack(house_id, device_id, envelope, retained):
             with session_factory() as session:
-                CommandService(CommandRepository(session)).ack(
+                CommandService(CommandRepository(session), control_authority=control_authority).ack(
                     house_id, device_id, envelope, retained
                 )
 
         async def command_state(house_id, device_id, envelope, retained):
             with session_factory() as session:
-                CommandService(CommandRepository(session)).state(
+                CommandService(CommandRepository(session), control_authority=control_authority).state(
                     house_id, device_id, envelope, retained
                 )
+
+        async def authorize_command(house_id: str, device_id: str) -> None:
+            with session_factory() as session:
+                DeviceService(
+                    DeviceRepository(session), RoomRepository(session), event_bus
+                ).require_house(house_id, device_id)
+                PhysicalBindingGuard(
+                    PhysicalDeviceRepository(session)
+                ).require_command_contract(device_id)
+                if (house_id, device_id) not in settings.mqtt_software_devices:
+                    raise ConflictError("MQTT command destination is not approved software")
+
+        async def control_stage(house_id, device_id, command_id):
+            with session_factory() as session:
+                return control_authority.stage(session, house_id, device_id, command_id)
+
+        async def control_request(house_id, device_id, request):
+            with session_factory() as session:
+                return control_authority.request(session, house_id, device_id, request)
 
         gateway = MQTTGateway(
             client,
@@ -126,6 +149,10 @@ def create_app(
             sleep=mqtt_sleep,
             command_ack_handler=command_ack,
             command_state_handler=command_state,
+            command_guard=authorize_command,
+            control_authority=control_authority,
+            control_stage_handler=control_stage,
+            control_request_handler=control_request,
         )
 
     command_transport: Transport | None = gateway
@@ -194,6 +221,12 @@ def create_app(
                 simulator.run(), name="kzhome-virtual-device-simulator"
             )
         if gateway is not None:
+            if readiness.check(True) is None:
+                with session_factory() as session:
+                    try:
+                        control_authority.initialize(session)
+                    except UnavailableError:
+                        pass  # Physical recovery stays closed; software MQTT is independent.
             gateway.start()
         try:
             app.state.initialized = True
@@ -218,6 +251,7 @@ def create_app(
     application.state.settings = settings
     application.state.initialized = False
     application.state.mqtt_gateway = gateway
+    application.state.control_authority = control_authority
     application.include_router(
         build_router(get_session, event_bus, command_transport, settings)
     )

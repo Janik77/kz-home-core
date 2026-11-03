@@ -2,13 +2,18 @@ import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
+from time import monotonic
 
 from pydantic import ValidationError
 
 from app.events import Event, EventBus
+from app.core.errors import ConflictError, InvalidReferenceError, UnavailableError
+from app.services.control_authority import default_control_authority
+from app.transports.control_models import decode_request
+from app.services.command_clock import COMMAND_LIFETIME, command_clock
 from app.schemas import DeviceState
 from app.transports.mqtt_client import MQTTClient, MQTTMessage
 from app.transports.mqtt_models import (
@@ -19,7 +24,6 @@ from app.transports.mqtt_models import (
     StateEnvelope,
     StatusEnvelope,
     TelemetryEnvelope,
-    utc_now,
     validate_json_bounds,
 )
 from app.transports.mqtt_topics import (
@@ -59,6 +63,10 @@ class MQTTGateway:
             [str, str, StateEnvelope, bool], Awaitable[None]
         ]
         | None = None,
+        command_guard: IdentityHandler | None = None,
+        control_authority=None,
+        control_stage_handler=None,
+        control_request_handler=None,
     ) -> None:
         self.client = client
         self.event_bus = event_bus
@@ -70,6 +78,14 @@ class MQTTGateway:
         self.maximum_backoff = maximum_backoff
         self.command_ack_handler = command_ack_handler
         self.command_state_handler = command_state_handler
+        self.command_guard = command_guard
+        self.control_authority = control_authority or default_control_authority
+        self.control_stage_handler = control_stage_handler
+        self.control_request_handler = control_request_handler
+        self._control_devices = {}
+        self._control_second = -1
+        self._control_count = 0
+        self.control_subscribed = False
         if not 0 < initial_backoff <= maximum_backoff:
             raise ValueError("MQTT backoff must be positive and bounded")
         self._task: asyncio.Task[None] | None = None
@@ -95,8 +111,17 @@ class MQTTGateway:
         while not self._stopping:
             try:
                 await self.client.connect()
+                self.control_subscribed = False
                 for topic, qos in subscription_topics():
-                    await self.client.subscribe(topic, qos)
+                    try:
+                        await self.client.subscribe(topic, qos)
+                    except Exception:
+                        if topic.endswith("/control/request"):
+                            logger.warning("Control subscription unavailable; physical control stays closed")
+                            continue
+                        raise
+                    if topic.endswith("/control/request"):
+                        self.control_subscribed = True
                 self.connected = True
                 logger.info("MQTT connected; inbound subscriptions restored")
                 await self.event_bus.publish(Event(type="mqtt_connected", data={}))
@@ -123,6 +148,7 @@ class MQTTGateway:
                 backoff = min(backoff * 2, self.maximum_backoff)
 
     async def _disconnect(self) -> None:
+        self.control_subscribed = False
         was_connected = self.connected
         self.connected = False
         try:
@@ -140,17 +166,32 @@ class MQTTGateway:
         *,
         correlation_id: str = "",
         command_id: str = "",
+        timestamp: datetime | None = None,
+        expires_at: datetime | None = None,
     ) -> str:
+        await self.authorize_command(house_id, device_id)
+        if (
+            timestamp is None or expires_at is None
+            or timestamp.tzinfo is None or expires_at.tzinfo is None
+            or timestamp.utcoffset() != timedelta(0)
+            or expires_at.utcoffset() != timedelta(0)
+            or not timedelta(0) < expires_at - timestamp <= COMMAND_LIFETIME
+        ):
+            raise InvalidReferenceError("A valid original command deadline is required")
         correlation_id = correlation_id or str(uuid4())
         command_id = command_id or str(uuid4())
         envelope = CommandEnvelope(
             protocol_version=PROTOCOL_VERSION,
             command_id=command_id,
             correlation_id=correlation_id,
-            timestamp=utc_now(),
+            timestamp=timestamp,
+            expires_at=expires_at,
             state=state,
         )
         policy = TOPIC_POLICY[TopicKind.SET]
+        now = command_clock.now()
+        if not timestamp <= now < expires_at:
+            raise ConflictError("Command is outside its original validity interval")
         await self.client.publish(
             build_topic(house_id, device_id, TopicKind.SET),
             envelope.model_dump_json(),
@@ -159,10 +200,59 @@ class MQTTGateway:
         )
         return command_id
 
+    async def authorize_command(self, house_id: str, device_id: str) -> None:
+        if self.command_guard is None:
+            raise ConflictError("MQTT command destination is not approved")
+        await self.command_guard(house_id, device_id)
+
+    async def send_control_command(self, house_id: str, device_id: str, command_id: str) -> None:
+        if self.control_stage_handler is None:
+            raise ConflictError("Physical control authority is unavailable")
+        delivery = await self.control_stage_handler(house_id, device_id, command_id)
+        if not self.connected or not self.control_subscribed:
+            raise UnavailableError("Control transport subscription is unavailable")
+        self.control_authority.validate_delivery(delivery)
+        await self.client.publish(build_topic(house_id, device_id, TopicKind.CONTROL_COMMAND),
+                                  delivery.payload, qos=1, retain=False)
+
+    async def _control_request(self, parsed, message):
+        if message.retained:
+            raise ValueError("Retained control requests are forbidden")
+        request = decode_request(message.payload)
+        # Transport-level limiter protects DB even when timing is unqualified.
+        tick = monotonic()
+        self._control_devices = {key: value for key, value in self._control_devices.items()
+                                 if tick - value < 1}
+        second = int(tick)
+        if second != self._control_second:
+            self._control_second, self._control_count = second, 0
+        key = parsed.house_id, parsed.device_id
+        if key in self._control_devices or len(self._control_devices) >= 4096 or self._control_count >= 100:
+            return
+        self._control_devices[key] = tick
+        self._control_count += 1
+        await self.identity_handler(*key)
+        if self.control_request_handler is None:
+            raise ConflictError("Physical control authority is unavailable")
+        try:
+            delivery = await self.control_request_handler(*key, request)
+            if not self.connected or not self.control_subscribed:
+                raise UnavailableError("Control transport subscription is unavailable")
+            self.control_authority.validate_delivery(delivery)
+            payload = delivery.payload
+        except (ConflictError, UnavailableError):
+            payload = json.dumps({**request.model_dump(), "type": "permit_denied",
+                                  "reason": "unavailable"}, separators=(",", ":"))
+        await self.client.publish(build_topic(*key, TopicKind.CONTROL_REPLY),
+                                  payload, qos=1, retain=False)
+
     async def handle_message(self, message: MQTTMessage) -> None:
         parsed = parse_topic(message.topic)
-        if parsed.kind is TopicKind.SET:
-            raise ValueError("Core does not consume set topics")
+        if parsed.kind in (TopicKind.SET, TopicKind.CONTROL_COMMAND, TopicKind.CONTROL_REPLY):
+            raise ValueError("Core does not consume command/reply topics")
+        if parsed.kind is TopicKind.CONTROL_REQUEST:
+            await self._control_request(parsed, message)
+            return
         limit = (
             MAX_TELEMETRY_PAYLOAD
             if parsed.kind is TopicKind.TELEMETRY

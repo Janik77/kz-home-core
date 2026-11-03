@@ -1,4 +1,6 @@
 import os
+import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,6 +28,8 @@ class Settings:
     mqtt_tls_enabled: bool = False
     mqtt_keepalive: int = 60
     mqtt_client_id: str | None = None
+    # Trusted operator classification, never ordinary Device metadata.
+    mqtt_software_devices: tuple[tuple[str, str], ...] = ()
     auth_jwt_secret: str = "development-only-change-me-32-bytes"
     auth_jwt_algorithm: str = "HS256"
     auth_access_token_minutes: int = 15
@@ -33,6 +37,14 @@ class Settings:
 
     def __post_init__(self) -> None:
         _validate_app_env(self.app_env)
+        for pair in self.mqtt_software_devices:
+            if (
+                not isinstance(pair, tuple) or len(pair) != 2
+                or any(not isinstance(value, str) or not re.fullmatch(
+                    r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", value
+                ) for value in pair)
+            ):
+                raise ValueError("MQTT_SOFTWARE_DEVICES requires exact house/device pairs")
         if self.auth_jwt_algorithm not in {"HS256", "HS384", "HS512"}:
             raise ValueError("AUTH_JWT_ALGORITHM must be an approved HMAC algorithm")
         if self.auth_access_token_minutes < 1 or self.auth_refresh_token_days < 1:
@@ -93,6 +105,7 @@ class Settings:
             mqtt_tls_enabled=_boolean("MQTT_TLS_ENABLED", False),
             mqtt_keepalive=_integer("MQTT_KEEPALIVE", 60),
             mqtt_client_id=_optional("MQTT_CLIENT_ID"),
+            mqtt_software_devices=_software_devices(),
             auth_jwt_secret=os.getenv(
                 "AUTH_JWT_SECRET", "development-only-change-me-32-bytes"
             ),
@@ -110,6 +123,16 @@ def _boolean(name: str, default: bool) -> bool:
     if normalized not in {"1", "0", "true", "false", "yes", "no", "on", "off"}:
         raise ValueError(f"{name} must be a boolean")
     return normalized in {"1", "true", "yes", "on"}
+
+
+def _software_devices() -> tuple[tuple[str, str], ...]:
+    try:
+        value = json.loads(os.getenv("MQTT_SOFTWARE_DEVICES", "[]"))
+        if not isinstance(value, list) or any(not isinstance(pair, list) for pair in value):
+            raise ValueError
+        return tuple(tuple(pair) for pair in value)
+    except (ValueError, TypeError):
+        raise ValueError("Invalid MQTT_SOFTWARE_DEVICES") from None
 
 
 def _integer(name: str, default: int) -> int:

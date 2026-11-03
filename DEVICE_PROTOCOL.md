@@ -1,5 +1,16 @@
 # KZ Home Device Protocol v1
 
+**Core v0.22:** see [foundation](docs/COMMAND_EXPIRY_CORE_V0.22.md) and
+[experimental control authority](docs/CONTROL_AUTHORITY_CORE_V0.22_RU.md).
+Gateway emission requires original UTC creation and exclusive `expires_at`
+(at most 30 seconds later); ledger commands use persisted values. Physical
+control is blocked pending jointly verified firmware/time enforcement. Only
+explicitly classified software identities may receive legacy commands. The opt-in
+experimental `control/command`, `control/request`, `control/reply` profile has strict
+separate schemas; it does not overload ACK/set or enable physical control.
+Historical examples below do not authorize
+deadline-free dispatch from this Core.
+
 ## 1. Purpose and scope
 
 This document freezes the logical contract between KZ Home Core and physical

@@ -127,7 +127,7 @@ class Wire(FakeMQTTClient):
 
 
 @asynccontextmanager
-async def stack(tmp_path, monkeypatch):
+async def stack(tmp_path, monkeypatch, *, software=False):
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
     from app.main import create_app
@@ -138,6 +138,7 @@ async def stack(tmp_path, monkeypatch):
         mqtt_enabled=True,
         mqtt_host="unused",
         mqtt_client_id="offline-core",
+        mqtt_software_devices=(("fixture_house", "software_relay"),) if software else (),
     )
     engine = create_engine(settings.database_url)
     migration_config = AlembicConfig("alembic.ini")
@@ -158,6 +159,14 @@ async def stack(tmp_path, monkeypatch):
             ) as client:
                 api = LocalAPI(client)
                 await provision(api, ids, seed)
+                if software:
+                    # Separate software identity; do not relabel/delete inventory
+                    # to bypass the physical gate in lifecycle regression tests.
+                    await api.request("POST", "/devices", {
+                        "id": "software_relay", "room_id": "fixture_room",
+                        "name": "Software test relay", "type": "relay",
+                        "capabilities": ["on_off"],
+                    })
 
                 async def publish(topic, payload, **kwargs):
                     await core_wire.inject(topic, payload)
@@ -183,19 +192,13 @@ async def stack(tmp_path, monkeypatch):
         engine.dispose()
 
 
-def test_full_real_core_round_trip_replay_offline_and_repeat(tmp_path, monkeypatch):
+def test_physical_runner_is_blocked_until_firmware_contract_is_verified(tmp_path, monkeypatch):
     async def check():
         async with stack(tmp_path, monkeypatch) as (api, wire, relay, config, engine):
-            commands = []
-            for _ in range(2):
-                await preflight(
-                    config, api, "owner@example.test", "fixture-human-password"
-                )
-                commands += await scenario(config, api, wire, relay, 3, quiet=0.05)
-            assert len({c.command_id for c in commands}) == 4
-            assert all(
-                (qos, retained) == (1, False) for _, _, qos, retained in wire.published
-            )
+            await preflight(config, api, "owner@example.test", "fixture-human-password")
+            with pytest.raises(Failure, match="status 409"):
+                await scenario(config, api, wire, relay, 0.5, quiet=0.01)
+            assert wire.published == []
             with Session(engine) as session:
                 assert (
                     session.get(PhysicalDeviceORM, config.device_id).status == "active"
@@ -204,8 +207,6 @@ def test_full_real_core_round_trip_replay_offline_and_repeat(tmp_path, monkeypat
                 assert (
                     sum(r.event_type == "device_onboarding_changed" for r in rows) == 2
                 )
-                assert sum(r.event_type == "device_ack_received" for r in rows) == 6
-                assert sum(r.event_type == "device_state_changed" for r in rows) == 5
                 secret_free([r.payload for r in rows], (config.password, api.token))
 
     asyncio.run(check())
@@ -214,12 +215,12 @@ def test_full_real_core_round_trip_replay_offline_and_repeat(tmp_path, monkeypat
 @pytest.mark.parametrize(
     "missing", ["device_ack_received", "device_state_changed", "receipt"]
 )
-def test_missing_evidence_cannot_pass(tmp_path, monkeypatch, missing):
+def test_evidence_omission_cannot_bypass_physical_gate(tmp_path, monkeypatch, missing):
     async def check():
         async with stack(tmp_path, monkeypatch) as (api, wire, relay, config, _):
             api.omit = missing
             wire.drop = missing == "receipt"
-            with pytest.raises(Failure, match="Timeout"):
+            with pytest.raises(Failure, match="status 409"):
                 await scenario(config, api, wire, relay, 0.5, quiet=0.01)
 
     asyncio.run(check())

@@ -34,6 +34,9 @@ class CommandEnvelope(ProtocolEnvelope):
     command_id: str = Field(min_length=1, max_length=128)
     correlation_id: str = Field(min_length=1, max_length=128)
     timestamp: datetime
+    # Optional only for decoding historical v1/software fixtures. Gateway emission
+    # requires both times explicitly; this is not a negotiated physical policy.
+    expires_at: datetime | None = None
     state: dict[str, Any]
 
     @field_validator("state")

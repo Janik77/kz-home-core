@@ -20,6 +20,7 @@ def clear_settings_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "MQTT_TLS_ENABLED",
         "MQTT_KEEPALIVE",
         "MQTT_CLIENT_ID",
+        "MQTT_SOFTWARE_DEVICES",
         "AUTH_JWT_SECRET",
         "AUTH_JWT_ALGORITHM",
         "AUTH_ACCESS_TOKEN_MINUTES",

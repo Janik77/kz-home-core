@@ -127,7 +127,14 @@ class Relay:
             await self.send(TopicKind.ACK, ack)
             return
         error = None
-        if not now - COMMAND_WINDOW <= command.timestamp <= now + timedelta(seconds=30):
+        if command.expires_at is not None and (
+            command.expires_at.tzinfo is None
+            or not timedelta(0) < command.expires_at - command.timestamp <= timedelta(seconds=30)
+        ):
+            error = "protocol_error"
+        elif command.expires_at is not None and now >= command.expires_at:
+            error = "timeout"
+        elif not now - COMMAND_WINDOW <= command.timestamp <= now + timedelta(seconds=30):
             error = "timeout"
         elif set(command.state) != {"on"}:
             error = "unsupported_capability"

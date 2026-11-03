@@ -201,7 +201,7 @@ def check(demo, web):
         "-Atc",
         "SELECT version_num FROM alembic_version",
     )
-    if revision not in ("0005_device_onboarding", "0006_command_lifecycle"):
+    if revision not in ("0005_device_onboarding", "0006_command_lifecycle", "0007_control_authority"):
         raise DemoError("upgrade")
     return source_id(web)
 

@@ -38,6 +38,6 @@ def build_command_router(get_session, get_current_user, require, transport):
         user: UserORM = Depends(get_current_user),
     ):
         require(session, user, house_id, Permission.DEVICE_READ)
-        return CommandService(CommandRepository(session)).get(house_id, command_id)
+        return CommandService(CommandRepository(session), transport).get(house_id, command_id)
 
     return router

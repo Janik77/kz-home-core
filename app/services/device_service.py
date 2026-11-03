@@ -10,6 +10,7 @@ from app.repositories.physical_device_repository import PhysicalDeviceRepository
 from app.services.onboarding_service import PhysicalBindingGuard
 from app.schemas import DeviceCreate, DeviceRead, DeviceState, DeviceUpdate
 from app.services.state_validator import StateValidator
+from app.services.command_clock import COMMAND_LIFETIME, command_clock
 from app.transports.base import Transport
 
 
@@ -100,17 +101,19 @@ class DeviceService:
     ) -> DeviceRead:
         physical = PhysicalDeviceRepository(self.repository.session)
         PhysicalBindingGuard(physical).require_active(device_id)
-        if physical.by_device(device_id) is not None and self.transport is None:
-            raise ConflictError("Physical device commands require a transport")
+        PhysicalBindingGuard(physical).require_command_contract(device_id)
         entity = self.repository.get(device_id)
         current = self._read(entity)
         if self.transport is not None:
             self.state_validator.validate_command(current, patch)
+            timestamp = command_clock.now()
             await self.transport.send_command(
                 self.repository.house_id(device_id),
                 device_id,
                 patch,
                 correlation_id=correlation_id,
+                timestamp=timestamp,
+                expires_at=timestamp + COMMAND_LIFETIME,
             )
             return current
         self.state_validator.validate(current, patch)

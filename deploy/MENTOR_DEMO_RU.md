@@ -1,5 +1,10 @@
 # KZ Home v0.14 — демо для технического наставника
 
+**Core v0.22 (разработка):** [первая часть command expiry](../docs/COMMAND_EXPIRY_CORE_V0.22.md)
+блокирует управление физическими устройствами до согласованного Firmware/time-контракта.
+Программное demo-реле разрешено отдельно; его identity нельзя использовать для ESP32.
+Уже установленную v0.20 обновлять сейчас не требуется; эта работа её не меняет.
+
 **Core v0.21 — физическое реле:** classic ESP32-WROOM-32 использует профиль
 `esp32-relay-v1`; ESP32-C6 — `esp32-c6-relay-v1`. Обязательные ручные шаги:
 [inventory, claim, отдельные MQTT credentials/ACL/TLS и activation](../DEVICE_ONBOARDING.md#classic-esp32-manual-commissioning-core-v021).

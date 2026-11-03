@@ -1,5 +1,10 @@
 # Core v0.15 — Command Lifecycle API
 
+**Core v0.22:** [expiry foundation and limitations](docs/COMMAND_EXPIRY_CORE_V0.22.md)
+supersede physical dispatch behavior described in this historical release report.
+Creation/deadline are now carried unchanged to MQTT; physical control is blocked
+until a firmware/time contract can be verified. HTTP receipt/status enums are unchanged.
+
 ## Discovery and compatible extension
 
 Before implementation both worktrees were clean. Core was already on
