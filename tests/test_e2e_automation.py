@@ -85,6 +85,7 @@ async def stack(tmp_path, monkeypatch):
         mqtt_enabled=True,
         mqtt_host="unused",
         mqtt_client_id="offline-core",
+        mqtt_software_devices=(("e2e_house", "e2e_relay"),),
     )
     engine = create_engine(settings.database_url)
     Base.metadata.create_all(engine)
@@ -289,6 +290,9 @@ def test_all_mqtt_identities_have_only_required_directional_permissions():
         "topic read kzhome/v1/+/+/telemetry",
         "topic read kzhome/v1/+/+/status",
         "topic write kzhome/v1/+/+/set",
+        "topic read kzhome/v1/+/+/control/request",
+        "topic write kzhome/v1/+/+/control/command",
+        "topic write kzhome/v1/+/+/control/reply",
     ]
     assert identities["relay-simulator"] == [
         "topic read kzhome/v1/e2e_house/e2e_relay/set",

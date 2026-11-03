@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from hashlib import sha256
 from uuid import uuid4
 
@@ -22,8 +22,10 @@ from app.services.state_validator import StateValidator
 from app.services.device_service import DeviceService
 from app.transports.base import Transport
 from app.transports.mqtt_models import AckEnvelope, StateEnvelope
+from app.services.command_clock import COMMAND_LIFETIME, command_clock
+from app.models import ControlCommandORM
+from app.services.control_authority import default_control_authority
 
-COMMAND_TIMEOUT_SECONDS = 30
 PUBLISH_TIMEOUT_SECONDS = 5
 
 
@@ -37,21 +39,38 @@ class CommandService:
         repository: CommandRepository,
         transport: Transport | None = None,
         *,
-        now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        now: Callable[[], datetime] = command_clock.now,
+        control_authority=None,
     ):
         self.repository = repository
         self.transport = transport
         self.now = now
+        self.control_authority = (control_authority or getattr(transport, "control_authority", None)
+                                  or default_control_authority)
 
     def expire(self, row: DeviceCommandORM) -> None:
-        if row.status in PENDING and utc(row.expires_at) <= self.now():
-            self.finish(row, "timed_out", "deadline_exceeded")
+        if row.status not in PENDING:
+            return
+        control = self.repository.session.get(ControlCommandORM, row.command_id)
+        expired = (self.control_authority.expired(control) if control is not None
+                   else utc(row.expires_at) <= self.now())
+        if expired:
+            if control is None:
+                self.finish(row, "timed_out", "deadline_exceeded")
+            else:
+                row.status, row.failure_code = "timed_out", "deadline_exceeded"
+                row.updated_at = row.completed_at = self.control_authority.clock.logical_now()
 
     def finish(
         self, row: DeviceCommandORM, status: str, code: str | None = None
     ) -> None:
         row.status, row.failure_code = status, code
-        row.updated_at = row.completed_at = self.now()
+        row.updated_at = row.completed_at = self.event_time(row)
+
+    def event_time(self, row: DeviceCommandORM) -> datetime:
+        if self.repository.session.get(ControlCommandORM, row.command_id) is not None:
+            return self.control_authority.clock.logical_now()
+        return self.now()
 
     def get(self, house_id: str, command_id: str) -> CommandRead:
         row = self.repository.find(house_id=house_id, command_id=command_id)
@@ -81,6 +100,9 @@ class CommandService:
             self.expire(previous)
             self.repository.save()
             return CommandRead.model_validate(previous)
+        PhysicalBindingGuard(PhysicalDeviceRepository(session)).require_command_contract(
+            device_id
+        )
         if device.type != "relay" or "on_off" not in device.capabilities:
             raise InvalidReferenceError("Only relay on_off commands are supported")
         StateValidator().validate_command(DeviceService._read(device), {"on": on})
@@ -94,6 +116,7 @@ class CommandService:
             raise ConflictError("Device is reported offline")
         if self.transport is None or not getattr(self.transport, "connected", False):
             raise UnavailableError("MQTT transport is unavailable")
+        await self.transport.authorize_command(house_id, device_id)
         now = self.now()
         row = DeviceCommandORM(
             command_id=str(uuid4()),
@@ -106,7 +129,7 @@ class CommandService:
             status="queued",
             created_at=now,
             updated_at=now,
-            expires_at=now + timedelta(seconds=COMMAND_TIMEOUT_SECONDS),
+            expires_at=now + COMMAND_LIFETIME,
             dispatch_started_at=now,
         )
         session.add(row)
@@ -120,6 +143,8 @@ class CommandService:
                     {"on": on},
                     command_id=identifier,
                     correlation_id=row.correlation_id,
+                    timestamp=utc(row.created_at),
+                    expires_at=utc(row.expires_at),
                 ),
                 timeout=PUBLISH_TIMEOUT_SECONDS,
             )
@@ -155,10 +180,15 @@ class CommandService:
     def confirm(self, row: DeviceCommandORM) -> None:
         if (
             row.ack_status == "applied"
+            and self.permit_evidence(row)
             and row.state_received_at is not None
             and row.reported_on == row.requested_on
         ):
             self.finish(row, "applied")
+
+    def permit_evidence(self, row: DeviceCommandORM) -> bool:
+        control = self.repository.session.get(ControlCommandORM, row.command_id)
+        return control is None or control.permit_binding_sha256 is not None
 
     def ack(
         self,
@@ -174,19 +204,22 @@ class CommandService:
             device_id=device_id,
         )
         if self.eligible(row, retained):
+            if envelope.status == "applied" and not self.permit_evidence(row):
+                self.repository.save()
+                return
             # ACK accepted cannot regress applied evidence. Negative ACK before verified
             # completion fails closed; terminal lifecycle records are immutable.
             if envelope.status in ("rejected", "failed") or (
                 row.ack_status != "applied" and row.ack_status != envelope.status
             ):
                 row.ack_status = envelope.status
-                row.ack_received_at = self.now()
-                row.updated_at = self.now()
+                row.ack_received_at = self.event_time(row)
+                row.updated_at = self.event_time(row)
                 if envelope.status in ("rejected", "failed"):
                     self.finish(row, "failed", "device_" + envelope.status)
                 else:
                     row.status = "dispatched"
-                    row.dispatched_at = row.dispatched_at or self.now()
+                    row.dispatched_at = row.dispatched_at or self.event_time(row)
                     self.confirm(row)
         self.repository.save()
 
@@ -202,9 +235,10 @@ class CommandService:
             house_id=house_id,
             device_id=device_id,
         )
-        if self.eligible(row, retained) and type(envelope.state.get("on")) is bool:
+        if (self.eligible(row, retained) and self.permit_evidence(row)
+                and type(envelope.state.get("on")) is bool):
             row.reported_on = envelope.state["on"]
-            row.state_received_at = self.now()
-            row.updated_at = self.now()
+            row.state_received_at = self.event_time(row)
+            row.updated_at = self.event_time(row)
             self.confirm(row)
         self.repository.save()

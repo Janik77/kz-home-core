@@ -138,6 +138,12 @@ class PhysicalBindingGuard:
     def __init__(self, repository: PhysicalDeviceRepository):
         self.repository = repository
 
+    def require_command_contract(self, device_id: str) -> None:
+        # No released firmware proves deadline enforcement/time bounds yet.
+        # Neither metadata, active status nor a software allowlist overrides this.
+        if self.repository.by_device(device_id) is not None:
+            raise ConflictError("Physical command expiry contract is not verified")
+
     def structure_mutation(
         self,
         kind: str,

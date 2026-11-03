@@ -23,7 +23,7 @@ class Harness:
         self.gateway = api.client._transport.app.state.mqtt_gateway
 
     async def post(
-        self, on=True, key=None, device="fixture_relay", token=None, body=None
+        self, on=True, key=None, device="software_relay", token=None, body=None
     ):
         return await self.api.client.post(
             f"/v1/devices/{device}/commands",
@@ -47,7 +47,7 @@ class Harness:
         payload,
         retained=False,
         house="fixture_house",
-        device="fixture_relay",
+        device="software_relay",
     ):
         await self.gateway.handle_message(
             MQTTMessage(
@@ -99,7 +99,7 @@ async def fixture(tmp_path, monkeypatch):
         if isinstance(value, logging.Logger)
     }
     try:
-        async with stack(tmp_path, monkeypatch) as (api, wire, _, _, engine):
+        async with stack(tmp_path, monkeypatch, software=True) as (api, wire, _, _, engine):
             h = Harness(api, wire, engine)
             await h.message(
                 "status",
@@ -387,7 +387,7 @@ def test_resident_result_read_is_not_audit_access_or_control_authorization(
             ).status_code == 404
             assert (
                 await h.api.client.post(
-                    "/v1/devices/fixture_relay/commands",
+                    "/v1/devices/software_relay/commands",
                     json={"on": True},
                     headers={"Idempotency-Key": str(uuid4())},
                 )
@@ -506,7 +506,7 @@ def test_restart_retains_pending_evidence_and_does_not_republish(tmp_path, monke
                 assert not app.state.mqtt_gateway.client.published
                 await app.state.mqtt_gateway.handle_message(
                     MQTTMessage(
-                        "kzhome/v1/fixture_house/fixture_relay/state",
+                        "kzhome/v1/fixture_house/software_relay/state",
                         json.dumps(
                             {
                                 "timestamp": datetime.now(UTC).isoformat(),

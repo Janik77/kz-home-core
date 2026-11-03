@@ -5,6 +5,10 @@ topic read kzhome/v1/+/+/ack
 topic read kzhome/v1/+/+/telemetry
 topic read kzhome/v1/+/+/status
 topic write kzhome/v1/+/+/set
+# Experimental authority directions only; device control ACLs are not provisioned.
+topic read kzhome/v1/+/+/control/request
+topic write kzhome/v1/+/+/control/command
+topic write kzhome/v1/+/+/control/reply
 
 # Optional commissioning identity; no access until an operator creates its password.
 # Register these exact house/device IDs in Core, or change all device paths together.

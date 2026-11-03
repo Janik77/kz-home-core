@@ -13,6 +13,9 @@ class TopicKind(str, Enum):
     ACK = "ack"
     TELEMETRY = "telemetry"
     STATUS = "status"
+    CONTROL_COMMAND = "control/command"
+    CONTROL_REQUEST = "control/request"
+    CONTROL_REPLY = "control/reply"
 
 
 @dataclass(frozen=True)
@@ -27,6 +30,9 @@ TOPIC_POLICY = {
     TopicKind.ACK: TopicPolicy(qos=1, retain=False),
     TopicKind.TELEMETRY: TopicPolicy(qos=0, retain=False),
     TopicKind.STATUS: TopicPolicy(qos=1, retain=True),
+    TopicKind.CONTROL_COMMAND: TopicPolicy(qos=1, retain=False),
+    TopicKind.CONTROL_REQUEST: TopicPolicy(qos=1, retain=False),
+    TopicKind.CONTROL_REPLY: TopicPolicy(qos=1, retain=False),
 }
 
 
@@ -50,9 +56,10 @@ def build_topic(house_id: str, device_id: str, kind: TopicKind) -> str:
 
 def parse_topic(topic: str) -> ParsedTopic:
     parts = topic.split("/")
-    if len(parts) != 5 or parts[:2] != ["kzhome", PROTOCOL_VERSION]:
+    if len(parts) not in (5, 6) or parts[:2] != ["kzhome", PROTOCOL_VERSION]:
         raise ValueError("Malformed or unsupported MQTT topic")
-    _, _, house_id, device_id, raw_kind = parts
+    house_id, device_id = parts[2:4]
+    raw_kind = "/".join(parts[4:])
     _validate_identifier(house_id, "house_id")
     _validate_identifier(device_id, "device_id")
     try:
@@ -68,6 +75,7 @@ def subscription_topics() -> tuple[tuple[str, int], ...]:
         TopicKind.ACK,
         TopicKind.TELEMETRY,
         TopicKind.STATUS,
+        TopicKind.CONTROL_REQUEST,
     )
     return tuple(
         (f"{TOPIC_ROOT}/+/+/{kind.value}", TOPIC_POLICY[kind].qos)

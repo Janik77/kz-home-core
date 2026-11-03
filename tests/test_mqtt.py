@@ -1,6 +1,6 @@
 import asyncio
 import json
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -47,7 +47,8 @@ class GatewayHarness:
 
         self.bus.subscribe(collect)
         self.gateway = MQTTGateway(
-            self.client, self.bus, state, status, identity, initial_backoff=0.01
+            self.client, self.bus, state, status, identity, initial_backoff=0.01,
+            command_guard=identity,
         )
 
     def handle(self, topic: str, payload: dict | bytes) -> None:
@@ -72,7 +73,7 @@ def test_topic_builder_parser_and_central_policy() -> None:
     assert TOPIC_POLICY[TopicKind.ACK].retain is False
     assert TOPIC_POLICY[TopicKind.STATUS].retain is True
     assert TOPIC_POLICY[TopicKind.TELEMETRY].qos == 0
-    assert len(subscription_topics()) == 4
+    assert len(subscription_topics()) == 5
 
 
 @pytest.mark.parametrize(
@@ -93,9 +94,12 @@ def test_malformed_topics_are_rejected(topic: str) -> None:
 
 def test_command_envelope_correlation_and_publish_policy() -> None:
     harness = GatewayHarness()
+    created = datetime.now(UTC) - timedelta(seconds=1)
+    deadline = created + timedelta(seconds=30)
     command_id = asyncio.run(
         harness.gateway.send_command(
-            "home1", "light1", {"brightness": 65}, correlation_id="corr-1"
+            "home1", "light1", {"brightness": 65}, correlation_id="corr-1",
+            timestamp=created, expires_at=deadline,
         )
     )
     topic, payload, qos, retain = harness.client.published[0]
@@ -106,6 +110,7 @@ def test_command_envelope_correlation_and_publish_policy() -> None:
         "command_id": command_id,
         "correlation_id": "corr-1",
         "timestamp": body["timestamp"],
+        "expires_at": body["expires_at"],
         "state": {"brightness": 65},
     }
     assert (qos, retain) == (1, False)

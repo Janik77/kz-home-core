@@ -50,6 +50,8 @@ def onboarding(tmp_path, monkeypatch, request):
         mqtt_enabled=True,
         mqtt_host="offline",
         mqtt_client_id="offline-core",
+        # Deliberate misclassification must never override physical inventory.
+        mqtt_software_devices=(("a", "physical1"),),
     )
     engine = create_engine(settings.database_url)
 
@@ -435,11 +437,15 @@ def test_active_physical_command_ack_state_status_and_deactivation(onboarding):
     assert wire.published == []
     assert activate(onboarding).status_code == 200
     command = client.post("/devices/physical1/on", headers=headers["resident"])
-    assert command.status_code == 200 and command.json()["state"] == {}
-    topic, raw, qos, retained = wire.published[-1]
-    assert topic == "kzhome/v1/a/physical1/set" and (qos, retained) == (1, False)
-    sent = json.loads(raw)
-    assert sent["state"] == {"on": True}
+    assert command.status_code == 409
+    assert "expiry contract" in command.json()["detail"]
+    assert wire.published == []
+    # Existing ingress/observed state still works; this historical unsolicited
+    # report is not evidence that a newly issued command was authorized.
+    sent = {
+        "command_id": "historical-command", "correlation_id": "historical-correlation",
+        "timestamp": "2026-10-01T00:00:00Z",
+    }
     for kind, body in (
         (
             "ack",
@@ -473,7 +479,7 @@ def test_active_physical_command_ack_state_status_and_deactivation(onboarding):
         client.post("/devices/physical1/off", headers=headers["resident"]).status_code
         == 409
     )
-    assert len(wire.published) == 1
+    assert wire.published == []
     with Session(engine) as session:
         assert session.get(DeviceORM, "physical1").state == {"on": True}
         assert session.get(DeviceORM, "physical1").online is False
@@ -650,7 +656,7 @@ def test_physical_requires_transport_and_cannot_bypass_binding(onboarding):
         service = DeviceService(
             DeviceRepository(session), RoomRepository(session), EventBus()
         )
-        with pytest.raises(ConflictError, match="require a transport"):
+        with pytest.raises(ConflictError, match="expiry contract"):
             asyncio.run(service.update_state("physical1", {"on": True}))
         session.rollback()
         # Simulate out-of-band corruption. Even an active identity cannot use it.
@@ -867,7 +873,10 @@ def test_physical_relay_rejects_invalid_command_state(onboarding, state):
             DeviceRepository(session), RoomRepository(session), EventBus()
         )
         service.transport = AsyncMock()
+        from app.services.state_validator import StateValidator
         with pytest.raises(InvalidReferenceError):
+            StateValidator().validate_command(service.get("physical1"), state)
+        with pytest.raises(ConflictError, match="expiry contract"):
             asyncio.run(service.update_state("physical1", state))
         service.transport.send_command.assert_not_awaited()
         assert session.get(DeviceORM, "physical1").state == {}
