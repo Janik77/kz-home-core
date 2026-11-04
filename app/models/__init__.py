@@ -13,8 +13,10 @@ from app.models.entities import (
 from app.models.physical_device import PhysicalDeviceORM
 from app.models.device_command import DeviceCommandORM
 from app.models.control_command import ControlCommandORM
+from app.models.provisioning_session import ProvisioningSessionORM
 
 __all__ = [
+    "ProvisioningSessionORM",
     "ControlCommandORM",
     "DeviceCommandORM",
     "PhysicalDeviceORM",
