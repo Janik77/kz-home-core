@@ -7,7 +7,7 @@ from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.migration import MigrationContext
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, inspect, text, event
 
 from app.db import Base
 import app.models  # noqa: F401
@@ -76,5 +76,32 @@ def test_migration_roundtrip_and_preservation(tmp_path, fresh):
                 )
             command.downgrade(config, "0007_control_authority")
             assert "provisioning_sessions" not in inspect(connection).get_table_names()
+    finally:
+        engine.dispose()
+
+
+def test_sqlite_committed_empty_downgrade_uses_write_transaction(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'downgrade.db'}")
+    config = Config()
+    config.set_main_option(
+        "script_location", str(Path(__file__).resolve().parents[1] / "alembic")
+    )
+    statements = []
+    try:
+        with engine.begin() as connection:
+            config.attributes["connection"] = connection
+            command.upgrade(config, "head")
+
+        def observe(connection, cursor, statement, parameters, context, many):
+            statements.append(statement)
+
+        event.listen(engine, "before_cursor_execute", observe)
+        with engine.begin() as connection:
+            config.attributes["connection"] = connection
+            command.downgrade(config, "0007_control_authority")
+            assert "provisioning_sessions" not in inspect(connection).get_table_names()
+        begin = statements.index("BEGIN IMMEDIATE")
+        count = statements.index("SELECT COUNT(*) FROM provisioning_sessions")
+        assert begin < count
     finally:
         engine.dispose()

@@ -15,7 +15,7 @@ from alembic.migration import MigrationContext
 from fastapi import HTTPException
 from sqlalchemy import create_engine, select, text, func, event, update
 from sqlalchemy.engine import make_url
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app.core.errors import ConflictError, EntityNotFoundError
@@ -31,7 +31,7 @@ from app.models import (
     DeviceORM,
 )
 from app.repositories.physical_device_repository import PhysicalDeviceRepository
-from app.schemas.onboarding import InventoryRegistration
+from app.schemas.onboarding import InventoryRegistration, DeviceClaim
 from app.schemas.provisioning import ProvisioningStart
 from app.services.onboarding_service import OnboardingService
 from app.services.provisioning_service import ProvisioningService
@@ -236,6 +236,17 @@ def test_downgrade_preserves_history(pg_attempts):
         config.attributes["connection"] = connection
         with pytest.raises(RuntimeError, match="history is not empty"):
             command.downgrade(config, "0007_control_authority")
+    with engine.connect() as connection:
+        assert (
+            connection.scalar(select(func.count()).select_from(ProvisioningSessionORM))
+            == 1
+        )
+        assert (
+            connection.scalar(
+                text(f'SELECT version_num FROM "{schema}".alembic_version')
+            )
+            == "0008_provisioning_sessions"
+        )
 
 
 def test_sql_cas_rejects_stale_snapshot_even_without_row_lock(pg_attempts):
@@ -302,3 +313,181 @@ def test_create_samples_db_clock_after_waiting_for_active_row(pg_attempts):
                 assert future.result(timeout=10) >= released_at
         finally:
             event.remove(engine, "before_cursor_execute", observe)
+
+
+@pytest.mark.parametrize("different_house", [False, True])
+def test_expired_unmaterialized_slot_is_reclaimed_once_under_race(
+    pg_attempts, different_house
+):
+    engine, code, *_ = pg_attempts
+    with Session(engine) as session:
+        old = ProvisioningService(session).create("a", "owner", body(code), uuid4())
+        session.execute(
+            update(ProvisioningSessionORM).values(
+                created_at=func.clock_timestamp() - text("interval '10 minutes'"),
+                expires_at=func.clock_timestamp() - text("interval '1 second'"),
+            )
+        )
+        session.commit()
+        assert (
+            session.get(ProvisioningSessionORM, str(old.session_id)).status
+            == "discovered"
+        )
+    barrier = Barrier(2)
+
+    def create_attempt(index):
+        house = "b" if different_house and index else "a"
+        with Session(engine) as session:
+            session.execute(text("SET lock_timeout = '5s'"))
+            barrier.wait(timeout=5)
+            try:
+                return (
+                    ProvisioningService(session)
+                    .create(house, "owner", body(code, house), uuid4())
+                    .status
+                )
+            except ConflictError:
+                return "conflict"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert sorted(pool.map(create_attempt, (0, 1))) == ["conflict", "discovered"]
+    with Session(engine) as session:
+        expired = session.get(ProvisioningSessionORM, str(old.session_id))
+        assert expired.status == "expired" and expired.revision == 1
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(ProvisioningSessionORM)
+                .where(ProvisioningSessionORM.status == "discovered")
+            )
+            == 1
+        )
+        assert session.get(PhysicalDeviceORM, "physical").claim_code_hash is not None
+
+
+@pytest.mark.parametrize("different_house", [False, True])
+def test_manual_claim_and_session_create_race_cannot_rebind_device(
+    pg_attempts, different_house
+):
+    engine, code, *_ = pg_attempts
+    barrier = Barrier(2)
+    claim_house = "b" if different_house else "a"
+
+    def worker(operation):
+        with Session(engine) as session:
+            session.execute(text("SET lock_timeout = '5s'"))
+            barrier.wait(timeout=5)
+            if operation == "manual":
+                return (
+                    OnboardingService(PhysicalDeviceRepository(session))
+                    .claim(
+                        claim_house,
+                        DeviceClaim(**body(code, claim_house).model_dump()),
+                        "owner",
+                    )
+                    .status
+                )
+            try:
+                return (
+                    ProvisioningService(session)
+                    .create("a", "owner", body(code), uuid4())
+                    .status
+                )
+            except EntityNotFoundError:
+                return "not_found"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        manual, attempt = list(pool.map(worker, ("manual", "session")))
+    assert manual == "provisioning" and attempt in {"discovered", "not_found"}
+    with Session(engine) as session:
+        physical = session.get(PhysicalDeviceORM, "physical")
+        assert physical.house_id == claim_house and physical.claim_code_hash is None
+        assert session.scalar(select(func.count()).select_from(DeviceORM)) == 1
+        assert session.scalar(
+            select(func.count()).select_from(ProvisioningSessionORM)
+        ) == (attempt == "discovered")
+        with pytest.raises(EntityNotFoundError):
+            ProvisioningService(session).create("a", "owner", body(code), uuid4())
+
+
+def test_postgresql_empty_downgrade_excludes_inserts_after_guard(pg_attempts):
+    engine, code, schema, config = pg_attempts
+    counted, finish = Event(), Event()
+
+    def pause_after_count(connection, cursor, statement, parameters, context, many):
+        if statement == "SELECT COUNT(*) FROM provisioning_sessions":
+            counted.set()
+            assert finish.wait(timeout=10)
+
+    def downgrade():
+        with engine.begin() as connection:
+            connection.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+            config.attributes["connection"] = connection
+            command.downgrade(config, "0007_control_authority")
+
+    event.listen(engine, "after_cursor_execute", pause_after_count)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(downgrade)
+            try:
+                assert counted.wait(timeout=5)
+                with Session(engine) as session:
+                    session.execute(text("SET lock_timeout = '300ms'"))
+                    with pytest.raises(OperationalError) as error:
+                        ProvisioningService(session).create(
+                            "a", "owner", body(code), uuid4()
+                        )
+                    assert error.value.orig.sqlstate == "55P03"
+            finally:
+                finish.set()
+            future.result(timeout=15)
+    finally:
+        event.remove(engine, "after_cursor_execute", pause_after_count)
+    with engine.connect() as connection:
+        # Existing inventory survived; only the empty attempt table was removed.
+        assert (
+            connection.scalar(select(func.count()).select_from(PhysicalDeviceORM)) == 1
+        )
+        assert (
+            connection.scalar(
+                text(f'SELECT version_num FROM "{schema}".alembic_version')
+            )
+            == "0007_control_authority"
+        )
+
+
+def test_postgresql_roundtrip_preserves_existing_inventory_and_device(pg_attempts):
+    engine, _, schema, config = pg_attempts
+    with Session(engine) as session:
+        session.add(
+            DeviceORM(
+                id="legacy",
+                room_id="ra",
+                name="Legacy",
+                type="relay",
+                state={"on": False},
+                capabilities=["on_off"],
+                online=False,
+                metadata_={"marker": "retain"},
+            )
+        )
+        session.commit()
+        expected_digest = session.get(PhysicalDeviceORM, "physical").claim_code_hash
+    with engine.begin() as connection:
+        connection.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+        config.attributes["connection"] = connection
+        command.downgrade(config, "0007_control_authority")
+        command.upgrade(config, "head")
+    with Session(engine) as session:
+        physical = session.get(PhysicalDeviceORM, "physical")
+        device = session.get(DeviceORM, "legacy")
+        assert physical.claim_code_hash == expected_digest
+        assert physical.status == "unprovisioned" and physical.house_id is None
+        assert device.state == {"on": False} and device.capabilities == ["on_off"]
+        assert device.metadata_ == {"marker": "retain"} and device.room_id == "ra"
+        assert session.scalar(select(func.count()).select_from(HouseORM)) == 2
+        assert session.scalar(select(func.count()).select_from(UserORM)) == 3
+        assert (
+            session.scalar(select(func.count()).select_from(ProvisioningSessionORM))
+            == 0
+        )

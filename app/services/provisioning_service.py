@@ -128,13 +128,14 @@ class ProvisioningService:
         self, house_id: str, actor_id: str, data: ProvisioningStart, key: UUID
     ) -> ProvisioningPublicStatus:
         # Include the high-entropy code digest, never serialize raw SecretStr.
+        supplied_digest = claim_digest(data.claim_code.get_secret_value())
         body_hash = digest(
             json.dumps(
                 {
                     "hardware_id": data.hardware_id,
                     "room_id": data.room_id,
                     "name": data.name,
-                    "claim_digest": claim_digest(data.claim_code.get_secret_value()),
+                    "claim_digest": supplied_digest,
                 },
                 sort_keys=True,
                 separators=(",", ":"),
@@ -161,14 +162,15 @@ class ProvisioningService:
                 if self.physical.structure_house("room", data.room_id) != house_id:
                     raise EntityNotFoundError("Resource not found")
                 item = self.physical.by_hardware(data.hardware_id)
-                if (
-                    item is None
-                    or item.status != "unprovisioned"
-                    or not compare_digest(
-                        item.claim_code_hash or "",
-                        claim_digest(data.claim_code.get_secret_value()),
-                    )
-                ):
+                # Always compare fixed-size digests, including absent/claimed IDs.
+                # This is not a constant-latency promise for DB/network operations.
+                expected_digest = (
+                    item.claim_code_hash
+                    if item is not None and item.claim_code_hash is not None
+                    else "0" * 64
+                )
+                code_matches = compare_digest(expected_digest, supplied_digest)
+                if item is None or item.status != "unprovisioned" or not code_matches:
                     raise EntityNotFoundError("Resource not found")
                 active = self.session.scalar(
                     select(ProvisioningSessionORM)

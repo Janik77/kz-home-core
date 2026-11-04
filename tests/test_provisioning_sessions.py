@@ -228,3 +228,35 @@ def test_storage_failures_are_redacted(onboarding, monkeypatch, caplog):
     assert response.status_code == 503
     assert response.json() == {"detail": "Provisioning storage unavailable"}
     assert secret not in response.text and secret not in caplog.text
+
+
+@pytest.mark.parametrize("identity", ["unknown", "wrong_code", "claimed"])
+def test_claim_verification_always_compares_fixed_length_digests(
+    onboarding, monkeypatch, identity
+):
+    from hmac import compare_digest
+
+    client, _, headers, code, *_ = onboarding
+    if identity == "claimed":
+        assert (
+            client.post(
+                "/houses/a/device-claims",
+                headers=headers["owner"],
+                json=claim_body(code),
+            ).status_code
+            == 201
+        )
+    comparisons = []
+
+    def record(expected, supplied):
+        comparisons.append((len(expected), len(supplied)))
+        return compare_digest(expected, supplied)
+
+    monkeypatch.setattr("app.services.provisioning_service.compare_digest", record)
+    patch = {"hardware_id": "unknown"} if identity == "unknown" else {}
+    if identity == "wrong_code":
+        patch["claim_code"] = "b" * 43
+    response = create(onboarding, **patch)
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Resource not found"}
+    assert comparisons == [(64, 64)]

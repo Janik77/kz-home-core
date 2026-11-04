@@ -77,7 +77,22 @@ def upgrade():
 def downgrade():
     if context.is_offline_mode():
         raise RuntimeError("Provisioning downgrade requires an online data check")
-    if op.get_bind().scalar(sa.text("SELECT COUNT(*) FROM provisioning_sessions")):
+    connection = op.get_bind()
+    # Hold the guard through DROP and transaction commit, not just the count.
+    # Otherwise a concurrent insert could commit after COUNT and be destroyed.
+    if connection.dialect.name == "postgresql":
+        connection.execute(
+            sa.text("LOCK TABLE provisioning_sessions IN ACCESS EXCLUSIVE MODE")
+        )
+    elif connection.dialect.name == "sqlite":
+        # pysqlite's legacy transaction mode does not BEGIN for SELECT/DDL.
+        if not connection.connection.dbapi_connection.in_transaction:
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+    else:
+        raise RuntimeError(
+            "Provisioning downgrade requires a supported locking dialect"
+        )
+    if connection.scalar(sa.text("SELECT COUNT(*) FROM provisioning_sessions")):
         raise RuntimeError("Cannot downgrade: provisioning history is not empty")
     op.drop_index("uq_provisioning_active_device", table_name="provisioning_sessions")
     op.drop_table("provisioning_sessions")

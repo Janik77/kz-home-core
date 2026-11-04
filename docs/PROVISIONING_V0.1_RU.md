@@ -71,6 +71,30 @@ PostgreSQL 16 запускается отдельно на loopback, тесты 
 после ожидания блокировки, partial unique index, metadata parity, upgrade,
 downgrade guard, secret redaction и отсутствие claim/command side effects.
 
+## Финальное ревью PR #31
+
+Исправлена TOCTOU-гонка downgrade 0008: проверка пустоты и удаление таблицы
+теперь защищены одной транзакцией и PostgreSQL ACCESS EXCLUSIVE lock. На SQLite
+при отсутствии реальной DBAPI-транзакции явно выполняется BEGIN IMMEDIATE:
+legacy pysqlite не открывает её для SELECT/DDL автоматически. Непустая история
+по-прежнему запрещает downgrade; миграции требуют maintenance-процедуры, а не
+параллельного штатного обслуживания API. Upgrade существующие таблицы не меняет.
+
+Проверка claim-кода использует fixed-length compare_digest даже для отсутствующей
+или уже занятой identity (dummy digest); short-circuit до сравнения удалён.
+Это не обещание постоянного HTTP latency: lookup, состояние БД и ожидание locks
+могут различаться. Rate limits остаются отдельным требованием второй части.
+Raw код не сохраняется и не возвращается, manual claim не изменён.
+
+Дополнительные PostgreSQL-тесты проверяют concurrent create поверх истёкшего,
+но ещё не материализованного слота (один/разные дома), гонку с manual claim,
+запрет insert между COUNT и DROP, сохранение inventory/Device при migration
+roundtrip. Старая discovered-запись не блокирует валидный новый create навсегда:
+её expiry и новый insert выполняются атомарно под inventory/session locks.
+Повтор со старым idempotency key намеренно возвращает старую expired-сессию;
+для новой попытки нужен новый key. Manual claim остаётся совместимым и может
+победить после create; session не означает ownership или разрешение control.
+
 ## Историческая база v0.1.0
 
 Статус: контракт и чистая модель попытки, база Core v0.22 `3d9e2d1`.
