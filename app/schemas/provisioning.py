@@ -1,4 +1,4 @@
-"""Draft provisioning contracts, deliberately not mounted as HTTP endpoints."""
+"""Provisioning contracts; part 1 exposes start/status/cancel only."""
 
 from enum import StrEnum
 from typing import Annotated
@@ -28,9 +28,9 @@ class ProvisioningErrorCode(StrEnum):
 
 
 class ProvisioningStart(DeviceClaim):
-    """House comes from the future authorized route; reuse existing claim input.
+    """House comes from the authorized route; reuse existing claim input.
 
-    Like DeviceClaim, validation errors may contain input. A future route MUST
+    Like DeviceClaim, validation errors may contain input. Every route MUST
     redact validation errors and never log this request or its serialized body.
     """
 

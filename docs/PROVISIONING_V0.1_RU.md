@@ -1,5 +1,102 @@
 # KZ Home — Provisioning v0.1.0
 
+## Уточнение v0.1.1, часть 1 — durable sessions
+
+Эта часть расширяет исторический v0.1.0 ниже: добавлены таблица
+`provisioning_sessions`, миграция `0008_provisioning_sessions` и только API:
+
+- `POST /houses/{house_id}/provisioning-sessions` — 201, в том числе retry;
+- `GET /houses/{house_id}/provisioning-sessions/{session_id}` — 200;
+- `POST /houses/{house_id}/provisioning-sessions/{session_id}/cancel` — 200.
+
+Все требуют текущего `device.onboard` в доме; право перепроверяется в транзакции.
+Любой owner/installer этого дома может прочитать/отменить попытку, не только её
+создатель. Чужая сессия/identity/комната скрываются 404; недостаточное право
+участника — 403. Отсутствие/некорректность входных данных — redacted 422.
+Ответы успешных операций имеют `Cache-Control: no-store` и прежний public allowlist.
+Нет confirm/proof/token-delivery API и переходов в registered/connected.
+
+Create принимает прежний ProvisioningStart и проверяет unprovisioned inventory
+и claim-код, но **не потребляет его**, не создаёт Device и не меняет binding.
+Оба POST требуют UUID `Idempotency-Key`. Create key scoped к house+actor;
+в БД хранится hash ключа и canonical request digest с digest высокоэнтропийного
+claim-кода. Тот же key с другим телом — 409. Retry возвращает **текущий** status
+сессии, включая expired/cancelled, без продления TTL и без новой попытки.
+Сохраняются только name, ссылки на существующие сущности и hashes; raw claim,
+challenge, token, Wi-Fi/MQTT credentials не сохраняются и не выдаются.
+Challenge/token пока генерируются и немедленно забываются после хеширования:
+они не пригодны для enrollment; второй этап должен определить отдельную
+одноразовую инициализацию/доставку до подключения proof transport.
+
+TTL фиксирован: 5 минут от серверного времени **после получения блокировок**.
+На PostgreSQL используется clock_timestamp(), а не начало транзакции now().
+GET материализует expiry; create лениво освобождает истёкший active slot на том
+же устройстве. Индекс уникальности status=discovered защищает от двух активных
+попыток глобально, включая разные дома и процессы. Нет фонового sweeper:
+непрочитанные expired-by-time записи могут оставаться discovered до обращения.
+Ошибочный cancel после TTL возвращает 409, но сохраняет материализованный expiry.
+Clock rollback protection за пределами trusted DB clock пока не реализована.
+
+Cancel принимает expected_revision; изменение проверяется в SQL по id+revision+
+старому status. Успешный cancel увеличивает revision один раз. Тот же cancel key,
+actor и исходная revision возвращают сохранённый cancelled без повторного перехода.
+Изменение revision при том же key или другой key после cancel — 409. Ключ scoped
+к session+actor+операция cancel, независимо от create. Неверная revision — 409.
+
+Блокировки: house → membership → physical inventory (create) → session.
+GET/cancel не берут physical lock. Ошибки SQL редактируются без параметров и
+traceback в ответах. Запрещено включать SQL echo/body/debug logs с секретами.
+Partial unique index и CAS — authority; Python locks отсутствуют.
+
+Сессия НЕ является ownership reservation: старый manual claim остаётся доступен.
+Она не блокирует его и не обещает, что identity останется unprovisioned после
+create. Во второй части proof/confirm обязаны повторно проверить binding/комнату/
+права в атомарной транзакции. Исторический status можно читать в исходном доме;
+он не раскрывает текущий дом устройства. Foreign keys RESTRICT сохраняют историю:
+удаление referenced house/room/user требует отдельной retention-процедуры.
+Downgrade при непустой таблице запрещён. Readiness требует новую миграцию;
+само приложение миграций не запускает. Установка наставника не обновляется.
+
+Остаются до второй части: signed transcript/verifier, rate limits и защита от
+заполнения истории авторизованным пользователем, аудит событий, retention,
+защита clock rollback, выдача bootstrap token и atomic claim. Ручной claim API
+сохраняет прежние ограничения и не становится более защищённым от этого API.
+
+Проверки части 1: 124 теста provisioning/state/schema/PostgreSQL, включая
+11 реальных PostgreSQL-проверок (из них 2 регрессии manual onboarding);
+263 профильных регрессии onboarding, expiry, authority, readiness, RBAC и MQTT.
+PostgreSQL 16 запускается отдельно на loopback, тесты мигрируют только уникальные
+временные schemas через явный TEST_POSTGRESQL_URL, не DATABASE_URL/.env.
+Проверены create/cancel races, SQL CAS на stale snapshot без row lock, DB clock
+после ожидания блокировки, partial unique index, metadata parity, upgrade,
+downgrade guard, secret redaction и отсутствие claim/command side effects.
+
+## Финальное ревью PR #31
+
+Исправлена TOCTOU-гонка downgrade 0008: проверка пустоты и удаление таблицы
+теперь защищены одной транзакцией и PostgreSQL ACCESS EXCLUSIVE lock. На SQLite
+при отсутствии реальной DBAPI-транзакции явно выполняется BEGIN IMMEDIATE:
+legacy pysqlite не открывает её для SELECT/DDL автоматически. Непустая история
+по-прежнему запрещает downgrade; миграции требуют maintenance-процедуры, а не
+параллельного штатного обслуживания API. Upgrade существующие таблицы не меняет.
+
+Проверка claim-кода использует fixed-length compare_digest даже для отсутствующей
+или уже занятой identity (dummy digest); short-circuit до сравнения удалён.
+Это не обещание постоянного HTTP latency: lookup, состояние БД и ожидание locks
+могут различаться. Rate limits остаются отдельным требованием второй части.
+Raw код не сохраняется и не возвращается, manual claim не изменён.
+
+Дополнительные PostgreSQL-тесты проверяют concurrent create поверх истёкшего,
+но ещё не материализованного слота (один/разные дома), гонку с manual claim,
+запрет insert между COUNT и DROP, сохранение inventory/Device при migration
+roundtrip. Старая discovered-запись не блокирует валидный новый create навсегда:
+её expiry и новый insert выполняются атомарно под inventory/session locks.
+Повтор со старым idempotency key намеренно возвращает старую expired-сессию;
+для новой попытки нужен новый key. Manual claim остаётся совместимым и может
+победить после create; session не означает ownership или разрешение control.
+
+## Историческая база v0.1.0
+
 Статус: контракт и чистая модель попытки, база Core v0.22 `3d9e2d1`.
 Это не работающий enrollment API. Нет новых маршрутов, таблиц, миграций,
 выдачи credentials, сетевых вызовов или изменений existing onboarding.
