@@ -4,6 +4,7 @@ from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
 import pytest
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session
@@ -33,7 +34,7 @@ def test_command_migration_matches_models_and_preserves_old_data(tmp_path, upgra
             command.upgrade(config, "head")
             assert (
                 connection.scalar(text("select version_num from alembic_version"))
-                == "0007_control_authority"
+                == ScriptDirectory.from_config(config).get_current_head()
             )
             if upgrade:
                 assert (
