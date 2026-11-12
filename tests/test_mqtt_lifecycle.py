@@ -45,6 +45,7 @@ class Session:
         if self.fail_subscription:
             raise aiomqtt.MqttError("subscription unavailable")
         self.subscriptions.append((topic, qos))
+        return (qos,)
 
     @property
     def messages(self):
@@ -183,3 +184,139 @@ def test_shutdown_during_connect_cleans_late_connection(monkeypatch):
         assert client._client is None
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("result", [(0,), (1,), (2,), "v5_success"])
+def test_suback_granted_codes(monkeypatch, result):
+    from paho.mqtt.packettypes import PacketTypes
+    from paho.mqtt.reasoncodes import ReasonCode
+
+    async def scenario():
+        class SubscriptionSession(Session):
+            async def subscribe(self, topic, qos):
+                return ([ReasonCode(PacketTypes.SUBACK, identifier=1)]
+                        if result == "v5_success" else result)
+
+        monkeypatch.setattr(aiomqtt, "Client", lambda **options: SubscriptionSession())
+        client = adapter()
+        await client.connect()
+        await client.subscribe("kzhome/v1/+/+/ack", 1)
+        await client.disconnect()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("result", [(128,), (), (0, 1), "v5_denied"])
+@pytest.mark.parametrize("control_only", [False, True])
+def test_denied_suback_does_not_mark_subscription_ready(monkeypatch, result, control_only):
+    from paho.mqtt.packettypes import PacketTypes
+    from paho.mqtt.reasoncodes import ReasonCode
+
+    async def scenario():
+        reached = asyncio.Event()
+        sessions, events, delays = [], [], []
+
+        class SubscriptionSession(Session):
+            async def subscribe(self, topic, qos):
+                self.subscriptions.append((topic, qos))
+                if not control_only or topic.endswith("/control/request"):
+                    return ([ReasonCode(PacketTypes.SUBACK, identifier=135)]
+                            if result == "v5_denied" else result)
+                return (qos,)
+
+        def factory(**options):
+            session = SubscriptionSession()
+            sessions.append(session)
+            return session
+
+        monkeypatch.setattr(aiomqtt, "Client", factory)
+
+        async def unused(*args):
+            pass
+
+        async def collect(event):
+            events.append(event.type)
+            if event.type == "mqtt_connected":
+                reached.set()
+
+        async def sleep(delay):
+            delays.append(delay)
+            reached.set()
+            await asyncio.Event().wait()
+
+        bus = EventBus()
+        bus.subscribe(collect)
+        gateway = MQTTGateway(adapter(), bus, unused, unused, unused, sleep=sleep)
+        gateway.start()
+        try:
+            await asyncio.wait_for(reached.wait(), 1)
+            assert not gateway.control_subscribed
+            assert gateway.connected is control_only
+            assert ("mqtt_connected" in events) is control_only
+            assert delays == ([] if control_only else [1])
+            assert sessions[0].exits == (0 if control_only else 1)
+        finally:
+            await gateway.stop()
+        assert sessions[0].exits == 1
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("grant", [1, 128])
+def test_real_aiomqtt_suback_over_loopback(grant):
+    """Real aiomqtt/Paho socket path; peer is a minimal MQTT fixture, not a broker."""
+    async def scenario():
+        packets = []
+        done = asyncio.get_running_loop().create_future()
+
+        async def packet(reader):
+            header = (await reader.readexactly(1))[0]
+            length, multiplier = 0, 1
+            for _ in range(4):
+                digit = (await reader.readexactly(1))[0]
+                length += (digit & 127) * multiplier
+                if not digit & 128:
+                    return header, await reader.readexactly(length)
+                multiplier *= 128
+            raise AssertionError("Invalid MQTT remaining length")
+
+        async def peer(reader, writer):
+            try:
+                header, payload = await packet(reader)
+                assert header == 0x10  # CONNECT
+                assert payload[:7] == b"\x00\x04MQTT\x04"  # MQTT 3.1.1
+                writer.write(b"\x20\x02\x00\x00")
+                await writer.drain()
+                header, payload = await packet(reader)
+                assert header == 0x82  # SUBSCRIBE
+                packets.append(payload[2:])
+                writer.write(b"\x90\x03" + payload[:2] + bytes([grant]))
+                await writer.drain()
+                header, _ = await packet(reader)
+                assert header == 0xE0  # DISCONNECT
+                done.set_result(None)
+            except Exception as error:
+                done.set_exception(error)
+            finally:
+                writer.close()
+                await writer.wait_closed()
+
+        server = await asyncio.start_server(peer, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        client = AiomqttClient(host="127.0.0.1", port=port, username=None,
+                               password=None, tls_enabled=False, keepalive=60,
+                               client_id="suback-regression")
+        async with server:
+            try:
+                await client.connect()
+                if grant == 128:
+                    with pytest.raises(ConnectionError, match="not granted"):
+                        await client.subscribe("fixture/ack", 1)
+                else:
+                    await client.subscribe("fixture/ack", 1)
+            finally:
+                await client.disconnect()
+            await asyncio.wait_for(done, 2)
+        assert packets == [b"\x00\x0bfixture/ack\x01"]
+
+    asyncio.run(asyncio.wait_for(scenario(), 5))
