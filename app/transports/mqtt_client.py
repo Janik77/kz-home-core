@@ -97,7 +97,12 @@ class AiomqttClient:
     async def subscribe(self, topic: str, qos: int) -> None:
         if self._client is None:
             raise ConnectionError("MQTT client is disconnected")
-        await self._client.subscribe(topic, qos=qos)
+        granted = await self._client.subscribe(topic, qos=qos)
+        # aiomqtt returns SUBACK reason codes without raising on broker rejection.
+        # This adapter subscribes to exactly one filter per call. Accept only a
+        # matching grant; a denial must never become gateway readiness evidence.
+        if len(granted) != 1 or getattr(granted[0], "value", granted[0]) not in (0, 1, 2):
+            raise ConnectionError("MQTT subscription was not granted")
 
     async def publish(
         self, topic: str, payload: str, *, qos: int, retain: bool
