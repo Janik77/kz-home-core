@@ -25,7 +25,14 @@ class ForeignDocker:
 
 def test_foreign_container_is_never_adopted(tmp_path):
     (tmp_path / "profile.json").write_text(
-        json.dumps({"owner": "a" * 32, "core_sha": CORE_SHA, "web_sha": WEB_SHA})
+        json.dumps(
+            {
+                "owner": "a" * 32,
+                "core_sha": CORE_SHA,
+                "web_sha": WEB_SHA,
+                "profile_path": str(tmp_path),
+            }
+        )
     )
     profile = Profile(tmp_path, ForeignDocker())
     with pytest.raises(ValueError, match="foreign"):
@@ -95,3 +102,44 @@ def test_reject_remote_or_native_vm_without_ci(monkeypatch, host, system):
     monkeypatch.setattr(Docker, "text", lambda *args: system)
     with pytest.raises(ValueError):
         Docker()
+
+
+def test_copied_profile_rejected_before_docker(tmp_path):
+    (tmp_path / "profile.json").write_text(
+        json.dumps(
+            {
+                "owner": "a" * 32,
+                "core_sha": CORE_SHA,
+                "web_sha": WEB_SHA,
+                "profile_path": str(tmp_path / "original"),
+            }
+        )
+    )
+    with pytest.raises(ValueError, match="directory binding"):
+        Profile(tmp_path, ForeignDocker())
+
+
+def test_missing_volume_backup_does_not_create_or_stop(tmp_path, monkeypatch):
+    (tmp_path / "profile.json").write_text(
+        json.dumps(
+            {
+                "owner": "a" * 32,
+                "core_sha": CORE_SHA,
+                "web_sha": WEB_SHA,
+                "profile_path": str(tmp_path),
+                "database_identity": "123",
+            }
+        )
+    )
+    (tmp_path / "seeded").write_text("1")
+    profile = Profile(tmp_path, ForeignDocker())
+    monkeypatch.setattr(profile, "owned", lambda *args: None)
+
+    def forbidden(*args):
+        pytest.fail("Lost-volume path mutated resources")
+
+    monkeypatch.setattr(profile, "stop", forbidden)
+    monkeypatch.setattr(profile.docker, "run", forbidden)
+    with pytest.raises(ValueError, match="storage missing"):
+        profile.backup(tmp_path / "backup")
+    assert not (tmp_path / "backup").exists()

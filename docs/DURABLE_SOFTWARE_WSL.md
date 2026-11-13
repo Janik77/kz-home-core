@@ -156,3 +156,35 @@ The TLS certificate lasts 365 days; renewal is not automated. Network failure an
 host sleep may terminate the foreground launcher: restart it with the same
 profile; do not reset data. This mode does not operate real relays, run the C
 worker, grant control authority, change production, main or the orchestrator VM.
+
+
+## Fail-closed storage identity and copied directories
+
+Only init and restore allocate a new database volume. Opening an initialized
+profile (including start and backup) requires its existing labelled volume and
+network. If storage is lost, no replacement volume is created and no backup
+destination is created. Recover with a previously verified backup into a NEW
+profile. A missing volume is data loss, not an empty new home.
+
+Profiles record the PostgreSQL cluster system identifier. Start verifies it;
+seeded starts and backups also require the exact pinned Alembic revision
+0009_definition_revisions. Backup validates these before creating its destination.
+Restore records the newly created cluster identity and validates the restored
+migration before marking initialization complete.
+
+The profile JSON binds the canonical directory path, and every Docker resource
+also carries a hash of that path. Copying a profile directory is not a supported
+clone or relocation: the unchanged copy is refused before Docker access; editing
+its path field still fails the resource label check. Use backup/restore, which
+assigns a new owner/path and new resources. These checks prevent accidental
+adoption, not a malicious administrator with Docker/file write access.
+
+Profiles created by the earlier draft before these identity fields/labels are
+refused. Do not edit JSON/labels to bypass the checks, reset or delete their data.
+Preserve such profiles for reviewed migration; automatic in-place upgrade of
+old draft profiles is intentionally not implemented.
+
+Mosquitto receives only six read-only file mounts: public CA certificate,
+server certificate/key, password hashes, ACL and broker configuration. It cannot
+see profile.json/JWT, the CA private key, backups or the entire profile directory.
+The server TLS private key remains necessary for the TLS listener.

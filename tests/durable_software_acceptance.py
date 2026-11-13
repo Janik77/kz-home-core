@@ -1,6 +1,7 @@
 """Opt-in CI acceptance for the durable software profile; never touches installed data."""
 
 import os
+import json
 from pathlib import Path
 import shutil
 import signal
@@ -13,7 +14,15 @@ from uuid import uuid4
 import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from tools.durable_software import CORE, Docker, Profile, initialize, restore  # noqa: E402
+from tools.durable_software import (
+    CORE,
+    BROKER_FILES,
+    EXPECTED_MIGRATION,
+    Docker,
+    Profile,
+    initialize,
+    restore,
+)  # noqa: E402
 
 
 def inventory(docker):
@@ -234,6 +243,49 @@ def main():
                 timeout=20,
             )
             assert attempt.returncode != 0 and not (root / "blocked").exists()
+
+        # A copied directory has an independent lock but must not control this owner.
+        copied = root / "copied"
+        shutil.copytree(source.path, copied)
+        original_started = source.owned("container", source.name + "-pg")["State"][
+            "StartedAt"
+        ]
+        try:
+            Profile(copied, docker)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Copied directory adopted original profile")
+        metadata = json.loads((copied / "profile.json").read_text())
+        metadata["profile_path"] = str(copied)
+        (copied / "profile.json").write_text(json.dumps(metadata))
+        copy_profile = Profile(copied, docker)
+        try:
+            with copy_profile.lock():
+                copy_profile.stop()
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Edited copy bypassed resource path binding")
+        assert (
+            source.owned("container", source.name + "-pg")["State"]["StartedAt"]
+            == original_started
+        )
+        broker = source.owned("container", source.name + "-mqtt")
+        binds = [item for item in broker["Mounts"] if item["Type"] == "bind"]
+        assert {item["Source"] for item in binds} == {
+            str(source.path / filename) for filename in BROKER_FILES
+        }
+        assert all(not item["RW"] for item in binds)
+        assert not any(
+            item["Source"]
+            in (
+                str(source.path),
+                str(source.path / "ca.key"),
+                str(source.path / "profile.json"),
+            )
+            for item in binds
+        )
         first_start = source.owned("container", source.name + "-pg")["State"][
             "StartedAt"
         ]
@@ -309,6 +361,56 @@ def main():
                 == "0"
             )
             profile.stop()
+
+        # Wrong migration and cluster identity must fail before any backup artifact.
+        restored.pg()
+        restored.query("UPDATE alembic_version SET version_num='wrong_revision'")
+        try:
+            with restored.lock():
+                restored.backup(root / "wrong-migration")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Wrong migration accepted")
+        assert not (root / "wrong-migration").exists()
+        restored._open_pg()
+        restored.query(
+            "UPDATE alembic_version SET version_num='" + EXPECTED_MIGRATION + "'"
+        )
+        expected_identity = restored.state["database_identity"]
+        restored.state["database_identity"] = "wrong-cluster"
+        try:
+            with restored.lock():
+                restored.backup(root / "wrong-identity")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Wrong database identity accepted")
+        assert not (root / "wrong-identity").exists()
+        restored.state["database_identity"] = expected_identity
+        restored.stop()
+        # Delete ONLY the restored test profile's labelled storage to reproduce loss.
+        assert restored.owned("container", restored.name + "-pg")
+        restored.docker.run("rm", "-v", restored.name + "-pg")
+        assert restored.owned("volume", restored.name + "-pgdata")
+        restored.docker.run("volume", "rm", restored.name + "-pgdata")
+        after_loss = inventory(docker)
+        for operation in (
+            lambda: restored.pg(),
+            lambda: restored.backup(root / "missing-volume"),
+        ):
+            try:
+                with restored.lock():
+                    operation()
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("Lost volume silently recreated")
+        assert not (root / "missing-volume").exists()
+        assert inventory(docker) == after_loss
+        print(
+            "PASS fail-closed: missing volume not recreated, no backup artifact; wrong migration/identity rejected; copied directory cannot control source; broker private inputs excluded"
+        )
         print(
             "PASS durable: heartbeat, software ACK/state, restart, settings/room/scene revisions, "
             "backup/restore, source preservation, active-profile/existing-target/corruption rejection; zero physical inventory"

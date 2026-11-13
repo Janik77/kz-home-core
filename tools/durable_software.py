@@ -25,6 +25,8 @@ PG = "postgres:17-bookworm@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6ef6225
 MQTT = "eclipse-mosquitto:2@sha256:75d6662dee52c947dc9dd9c29f1d8d7ffef78ddaf38001caa09755681e8bbc98"
 OPENSSL = "alpine/openssl:latest@sha256:6821afa2476e11be343f29275f2ca24291720ff0a7148bd131fd8e314ff26d9e"
 LABEL = "kzhome.durable-software"
+EXPECTED_MIGRATION = "0009_definition_revisions"
+BROKER_FILES = ("ca.crt", "server.crt", "server.key", "passwd", "acl", "mosquitto.conf")
 FILES = (
     "profile.json",
     "ca.key",
@@ -141,6 +143,11 @@ class Profile:
         if any(p.is_symlink() for p in (self.path, *self.path.parents)):
             raise ValueError("Symlink profile refused")
         self.state = json.loads((self.path / "profile.json").read_text())
+        if self.state.get("profile_path") != str(self.path):
+            raise ValueError(
+                "Profile directory binding mismatch; use backup/restore, never copy"
+            )
+        self.path_label = hashlib.sha256(str(self.path).encode()).hexdigest()
         self.owner = self.state["owner"]
         if not re.fullmatch(r"[a-f0-9]{32}", self.owner):
             raise ValueError("Invalid profile identity")
@@ -151,7 +158,12 @@ class Profile:
 
     @property
     def labels(self):
-        return ["--label", LABEL + "=" + self.owner]
+        return [
+            "--label",
+            LABEL + "=" + self.owner,
+            "--label",
+            LABEL + ".path=" + self.path_label,
+        ]
 
     def owned(self, kind, name):
         result = self.docker.run(kind, "inspect", name, check=False)
@@ -170,20 +182,73 @@ class Profile:
         labels = (
             item.get("Labels") if kind != "container" else item["Config"].get("Labels")
         )
-        if (labels or {}).get(LABEL) != self.owner:
+        if (labels or {}).get(LABEL) != self.owner or (labels or {}).get(
+            LABEL + ".path"
+        ) != self.path_label:
             raise ValueError("Refusing foreign resource")
         return item
 
-    def ensure_storage(self):
-        for kind, name, extra in (
-            ("network", self.name, []),
-            ("volume", self.name + "-pgdata", []),
-        ):
+    def create_storage(self):
+        # Only init/restore may allocate storage, and only for a new owner.
+        for kind, name in (("network", self.name), ("volume", self.name + "-pgdata")):
+            if self.owned(kind, name):
+                raise ValueError("New profile resource already exists")
+        self.docker.run("network", "create", *self.labels, self.name)
+        self.docker.run("volume", "create", *self.labels, self.name + "-pgdata")
+
+    def require_storage(self):
+        for kind, name in (("volume", self.name + "-pgdata"), ("network", self.name)):
             if not self.owned(kind, name):
-                self.docker.run(kind, "create", *extra, *self.labels, name)
+                raise ValueError(
+                    "Expected profile storage missing; restore a backup into a new profile"
+                )
+
+    def query(self, sql):
+        return self.docker.text(
+            "exec",
+            self.name + "-pg",
+            "psql",
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-U",
+            "lab",
+            "-d",
+            "lab",
+            "-Atc",
+            sql,
+        )
+
+    def save_identity(self):
+        self.state["database_identity"] = self.query(
+            "SELECT system_identifier FROM pg_control_system()"
+        )
+        temporary = self.path / "profile.json.new"
+        private_write(temporary, json.dumps(self.state))
+        temporary.replace(self.path / "profile.json")
+
+    def verify_database(self):
+        if self.query(
+            "SELECT system_identifier FROM pg_control_system()"
+        ) != self.state.get("database_identity"):
+            raise ValueError("Database identity mismatch")
+        if self.query("SELECT version_num FROM alembic_version") != EXPECTED_MIGRATION:
+            raise ValueError("Unexpected database migration")
 
     def pg(self):
-        self.ensure_storage()
+        if not self.state.get("database_identity"):
+            raise ValueError("Database identity missing; incomplete initialization")
+        url = self._open_pg()
+        if (
+            self.query("SELECT system_identifier FROM pg_control_system()")
+            != self.state["database_identity"]
+        ):
+            raise ValueError("Database identity mismatch")
+        if (self.path / "seeded").exists():
+            self.verify_database()
+        return url
+
+    def _open_pg(self):
+        self.require_storage()
         name = self.name + "-pg"
         if not self.owned("container", name):
             self.docker.run(
@@ -233,7 +298,23 @@ class Profile:
 
     def mqtt(self):
         name = self.name + "-mqtt"
-        if not self.owned("container", name):
+        for filename in BROKER_FILES:
+            if (self.path / filename).is_symlink():
+                raise ValueError("Symlink broker input refused")
+        existing = self.owned("container", name)
+        if existing:
+            binds = {
+                item["Source"]: item
+                for item in existing.get("Mounts", [])
+                if item["Type"] == "bind"
+            }
+            if set(binds) != {
+                str(self.path / filename) for filename in BROKER_FILES
+            } or any(item.get("RW") for item in binds.values()):
+                raise ValueError(
+                    "Unexpected broker mounts; preserve and review profile"
+                )
+        if not existing:
             self.docker.run(
                 "run",
                 "-d",
@@ -251,8 +332,14 @@ class Profile:
                 "/mosquitto/data",
                 "--tmpfs",
                 "/mosquitto/log",
-                "--mount",
-                f"type=bind,source={self.path},target=/lab,readonly",
+                *[
+                    argument
+                    for filename in BROKER_FILES
+                    for argument in (
+                        "--mount",
+                        f"type=bind,source={self.path / filename},target=/lab/{filename},readonly",
+                    )
+                ],
                 "-p",
                 "127.0.0.1::8883",
                 MQTT,
@@ -294,10 +381,12 @@ class Profile:
         # Caller holds lock: app/relay/Vite are stopped. Quiesce only owned containers.
         if not (self.path / "seeded").is_file():
             raise ValueError("Start and initialize this profile before backup")
+        self.require_storage()
         self.stop()
-        target = new_directory(destination)
         try:
             self.pg()
+            self.verify_database()
+            target = new_directory(destination)
             result = self.docker.run(
                 "exec",
                 self.name + "-pg",
@@ -339,6 +428,7 @@ def initialize(directory):
     path = new_directory(directory)
     state = dict(
         owner=uuid4().hex,
+        profile_path=str(path),
         core_sha=CORE_SHA,
         web_sha=WEB_SHA,
         web_port=free_port(),
@@ -391,7 +481,13 @@ def initialize(directory):
     )
     private_write(path / "acl", ACL)
     private_write(path / "mosquitto.conf", BROKER)
-    private_write(path / "initialized", "1")
+    try:
+        profile.create_storage()
+        profile._open_pg()
+        profile.save_identity()
+        private_write(path / "initialized", "1")
+    finally:
+        profile.stop()
     return profile
 
 
@@ -417,13 +513,17 @@ def restore(source, destination):
     docker = Docker()
     target = new_directory(destination)  # Never restore into any existing profile.
     saved["owner"] = uuid4().hex  # Never adopt the source's containers/network/volume.
+    saved["profile_path"] = str(target)
+    saved.pop("database_identity", None)
     saved["web_port"] = free_port()
     contents["profile.json"] = json.dumps(saved).encode()
     for name in FILES:
         private_write(target / name, contents[name])
     profile = Profile(target, docker)
     try:
-        profile.pg()
+        profile.create_storage()
+        profile._open_pg()
+        profile.save_identity()
         tables = docker.text(
             "exec",
             profile.name + "-pg",
@@ -451,6 +551,7 @@ def restore(source, destination):
             "--no-acl",
             data=contents["database.dump"],
         )
+        profile.verify_database()
         private_write(
             target / "initialized", "1"
         )  # Incomplete restore cannot be started.
