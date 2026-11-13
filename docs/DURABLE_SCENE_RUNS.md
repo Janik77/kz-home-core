@@ -89,14 +89,16 @@ persisted run; permissions and device guards are checked again at every dispatch
 
 Downgrade refuses nonempty scene-run history so evidence cannot silently be discarded.
 Existing endpoints/schema fields and MQTT envelopes are preserved; database migration
-is required before using this branch. Existing Web does not expose the new lifecycle yet.
+is required before using this branch. The pinned Web #18 exposes this lifecycle in the integrated software branch.
 Automation remains on its legacy unconfirmed path and is not implicitly migrated.
 
 ## Verification and dependencies
 
 Stacked on Core #37 `a2bc83aa2451590f71ac34f9aad1c7c328bccb19`, inheriting #36/#32/#33/#35
-and #34 broker coverage. Web fixture stays pinned to
-`fac23c233a1c86dad1661a9e2970cfca9450d00d`; newer Web versions are not covered by that pin.
+and #34 broker coverage. Web fixture is pinned to
+`1a3226527e6b9501735b29e251a2982c7f5577f4` (Web #18 including #17) in this integration.
+Persistent profile tooling comes from Core #38; integrated runtime is exactly
+Core #39 `f946a07f67f9ccb1e8f62c99860a0842bf3a062b`.
 Firmware protocol and gates are unchanged; Firmware #12 still pins older Core #36 and
 must be independently tested before claiming this exact new pair is validated.
 
