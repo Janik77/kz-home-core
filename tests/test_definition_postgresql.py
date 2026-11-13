@@ -176,8 +176,9 @@ def test_postgresql_enable_invalidates_rename(pg_definitions):
 @pytest.mark.parametrize(
     "kind,identifier", [("scene", "scene"), ("automation", "rule")]
 )
+@pytest.mark.parametrize("clock_fault", [None, "future_iat", "expired"])
 def test_postgresql_parallel_http_edits_conflict_after_both_validated(
-    pg_definitions, monkeypatch, kind, identifier
+    pg_definitions, monkeypatch, kind, identifier, clock_fault
 ):
     # Use actual auth, service validation and request-owned DB sessions. The
     # barrier deliberately makes both requests validate the same revision.
@@ -208,6 +209,20 @@ def test_postgresql_parallel_http_edits_conflict_after_both_validated(
                 "role": "owner",
             }
         )
+    from app.security import TokenCodec, TokenError
+
+    token_failures = []
+    decode = TokenCodec.decode
+
+    def diagnosed_decode(self, token, expected_type):
+        try:
+            return decode(self, token, expected_type)
+        except TokenError as error:
+            # Never include the token, claims, user identifier or exception text.
+            token_failures.append(type(error.__cause__).__name__)
+            raise
+
+    monkeypatch.setattr(TokenCodec, "decode", diagnosed_decode)
     barrier = Barrier(2)
     service = SceneService if kind == "scene" else AutomationService
     validate = service._validate
@@ -228,8 +243,28 @@ def test_postgresql_parallel_http_edits_conflict_after_both_validated(
         assert login.status_code == 200
         headers = {"Authorization": "Bearer " + login.json()["access_token"]}
         path = f"/{kind}s/{identifier}"
-        original = client.get(path, headers=headers).json()
+        initial = client.get(path, headers=headers)
+        assert initial.status_code == 200, initial.text
+        original = initial.json()
         assert original["revision"] == 1
+
+        if clock_fault is not None:
+            from datetime import UTC, datetime
+            import jwt.api_jwt
+
+            claims = TokenCodec(settings.auth_jwt_secret, "HS256", 15, 30).decode(
+                login.json()["access_token"], "access"
+            )
+            timestamp = (
+                claims["iat"] - 2 if clock_fault == "future_iat" else claims["exp"]
+            )
+
+            class RejectionClock(datetime):
+                @classmethod
+                def now(cls, tz=None):
+                    return cls.fromtimestamp(timestamp, UTC)
+
+            monkeypatch.setattr(jwt.api_jwt, "datetime", RejectionClock)
 
         def edit(index):
             return client.patch(
@@ -240,7 +275,29 @@ def test_postgresql_parallel_http_edits_conflict_after_both_validated(
 
         with ThreadPoolExecutor(max_workers=2) as workers:
             responses = list(workers.map(edit, [0, 1]))
-        assert sorted(response.status_code for response in responses) == [200, 409]
+        if clock_fault is not None:
+            assert [response.status_code for response in responses] == [401, 401]
+            assert all(
+                response.json() == {"detail": "Invalid access token"}
+                for response in responses
+            )
+            reason = (
+                "ImmatureSignatureError"
+                if clock_fault == "future_iat"
+                else "ExpiredSignatureError"
+            )
+            assert token_failures == [reason, reason]
+            model = SceneORM if kind == "scene" else AutomationORM
+            with Session(pg_definitions) as session:
+                persisted = session.get(model, identifier)
+                assert persisted.revision == 1 and persisted.name == "Original"
+            return
+        assert sorted(response.status_code for response in responses) == [200, 409], {
+            "responses": [
+                (response.status_code, response.json()) for response in responses
+            ],
+            "jwt_error_classes": token_failures,
+        }
         rejected = next(
             response for response in responses if response.status_code == 409
         )
