@@ -91,6 +91,17 @@ class DeviceService:
         ).structure_mutation("device", device_id, deleting=True)
         self.repository.delete(device_id)
 
+    def validate_state_update(self, device_id: str, patch: DeviceState) -> None:
+        """Side-effect-free admission check; actual dispatch must check again."""
+        physical = PhysicalDeviceRepository(self.repository.session)
+        PhysicalBindingGuard(physical).require_active(device_id)
+        PhysicalBindingGuard(physical).require_command_contract(device_id)
+        current = self.get(device_id)
+        if self.transport is not None:
+            self.state_validator.validate_command(current, patch)
+        else:
+            self.state_validator.validate(current, patch)
+
     async def update_state(
         self,
         device_id: str,

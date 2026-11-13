@@ -62,6 +62,11 @@ class SceneService:
     async def run(self, scene_id: str) -> SceneRead:
         scene = self.get(scene_id)
         self._validate(scene)
+        # Reject already-invalid later actions before any earlier action changes
+        # state. This is not a transaction or a promise of eventual completion;
+        # update_state still enforces its guards at each actual dispatch.
+        for action in scene.actions:
+            self.devices.validate_state_update(action.device_id, action.state)
         for action in scene.actions:
             await self.devices.update_state(action.device_id, action.state)
         await self.event_bus.publish(
