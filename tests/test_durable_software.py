@@ -55,3 +55,43 @@ def test_restore_rejects_unexpected_manifest_before_docker(tmp_path):
     with pytest.raises(ValueError, match="manifest"):
         restore(backup, tmp_path / "destination")
     assert not (tmp_path / "destination").exists()
+
+
+def test_restore_rejects_symlink_manifest_before_docker(tmp_path):
+    backup = tmp_path / "backup"
+    backup.mkdir()
+    other = tmp_path / "manifest"
+    other.write_text("{}")
+    (backup / "manifest.json").symlink_to(other)
+    with pytest.raises(ValueError, match="Symlink"):
+        restore(backup, tmp_path / "destination")
+    assert not (tmp_path / "destination").exists()
+
+
+@pytest.mark.parametrize(
+    "host,system",
+    [
+        ("ssh://orchestrator", "Docker Desktop"),
+        ("unix:///var/run/docker.sock", "Ubuntu 24.04"),
+    ],
+)
+def test_reject_remote_or_native_vm_without_ci(monkeypatch, host, system):
+    from types import SimpleNamespace
+    from tools.durable_software import Docker
+
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+
+    def context(*args, **kwargs):
+        command = args[0]
+        content = (
+            "default"
+            if command[-1] == "show"
+            else json.dumps([{"Endpoints": {"docker": {"Host": host}}}])
+        )
+        return SimpleNamespace(stdout=content)
+
+    monkeypatch.setattr("tools.durable_software.subprocess.run", context)
+    monkeypatch.setattr(Docker, "text", lambda *args: system)
+    with pytest.raises(ValueError):
+        Docker()

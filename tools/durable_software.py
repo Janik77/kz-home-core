@@ -15,6 +15,7 @@ import ssl
 import subprocess
 import sys
 import time
+import traceback
 from uuid import uuid4
 
 CORE = Path(__file__).resolve().parents[1]
@@ -742,7 +743,18 @@ def main():
                     print(
                         "Stopped own software processes; PostgreSQL volume and private profile preserved."
                     )
-    except Exception:
+    except Exception as error:
+        # Only type and code locations; never exception text, SQL, credentials or locals.
+        frames = traceback.extract_tb(error.__traceback__)
+        print(
+            "PROFILE_FAILURE "
+            + type(error).__name__
+            + " "
+            + ",".join(
+                Path(frame.filename).name + ":" + str(frame.lineno) for frame in frames
+            ),
+            file=sys.stderr,
+        )
         print(
             "Operation refused or failed. Preserve profile/backup and owned volume; no automatic reset or deletion.",
             file=sys.stderr,

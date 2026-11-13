@@ -49,7 +49,7 @@ def launch(profile, web):
             str(web),
         ],
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
         env={
             key: value
             for key, value in os.environ.items()
@@ -69,6 +69,10 @@ def launch(profile, web):
         with httpx.Client(base_url=url, trust_env=False, timeout=3) as http:
             while time.monotonic() < deadline:
                 if process.poll() is not None:
+                    diagnostic = process.stderr.read().decode(errors="replace")
+                    for line in diagnostic.splitlines():
+                        if line.startswith("PROFILE_FAILURE "):
+                            print(line, flush=True)
                     raise AssertionError("Owned durable launcher exited")
                 try:
                     if http.get("/core-api/ready").status_code == 200:
@@ -83,7 +87,8 @@ def launch(profile, web):
                 time.sleep(0.2)
         raise AssertionError("Owned durable launcher readiness timeout")
     except BaseException:
-        halt(process)
+        if process.poll() is None:
+            halt(process)
         raise
 
 
