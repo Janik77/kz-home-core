@@ -300,6 +300,79 @@ async def run():
                         (0, "applied", True, True),
                         (1, "applied", False, False),
                     ]
+                # A real PostgreSQL trigger holds the atomic link transaction
+                # until the original run deadline +165ms. No clock or broker mock.
+                response = await http.post(
+                    base,
+                    json={"scene_id": "durable_scene", "expected_revision": 1},
+                    headers={"Idempotency-Key": str(uuid4())},
+                )
+                assert response.status_code == 201
+                late_id = response.json()["id"]
+                with engine.begin() as connection:
+                    connection.execute(
+                        text(
+                            "UPDATE scene_runs SET dispatch_deadline=clock_timestamp()+interval '5 seconds' WHERE id=:id"
+                        ),
+                        {"id": late_id},
+                    )
+                    connection.execute(
+                        text("""
+                        CREATE FUNCTION scene_deadline_stall() RETURNS trigger LANGUAGE plpgsql AS $$
+                        DECLARE remaining double precision;
+                        BEGIN
+                          SELECT GREATEST(0, EXTRACT(EPOCH FROM (dispatch_deadline-clock_timestamp()))) + 0.165
+                            INTO remaining FROM scene_runs WHERE id=NEW.run_id;
+                          PERFORM pg_sleep(remaining);
+                          RETURN NEW;
+                        END $$
+                    """)
+                    )
+                    connection.execute(
+                        text(
+                            "CREATE TRIGGER scene_deadline_stall BEFORE INSERT ON scene_run_receipts FOR EACH ROW EXECUTE FUNCTION scene_deadline_stall()"
+                        )
+                    )
+                try:
+                    expired = await http.post(f"{base}/{late_id}/actions/0/dispatch")
+                    assert expired.status_code == 202
+                    late = expired.json()
+                    assert late["actions"][0]["receipt"]["status"] == "timed_out"
+                    assert (
+                        late["actions"][0]["receipt"]["expires_at"]
+                        == late["dispatch_deadline"]
+                    )
+                    assert late["actions"][1]["status"] == "skipped"
+                    replay = await http.post(f"{base}/{late_id}/actions/0/dispatch")
+                    assert replay.json() == late
+                    try:
+                        await asyncio.wait_for(mqtt.messages.__anext__(), 0.3)
+                    except TimeoutError:
+                        pass
+                    else:
+                        raise AssertionError("Scene published after its deadline")
+                    with engine.begin() as connection:
+                        assert (
+                            connection.scalar(
+                                text(
+                                    "SELECT count(*) FROM device_commands c JOIN scene_run_receipts r ON r.command_id=c.command_id WHERE r.run_id=:id AND c.status='timed_out'"
+                                ),
+                                {"id": late_id},
+                            )
+                            == 1
+                        )
+                    print(
+                        "PASS scene deadline: real PostgreSQL commit delayed to deadline +165ms, zero MQTT SET, immutable timed-out receipt, no replay or compensation",
+                        flush=True,
+                    )
+                finally:
+                    with engine.begin() as connection:
+                        connection.execute(
+                            text(
+                                "DROP TRIGGER scene_deadline_stall ON scene_run_receipts"
+                            )
+                        )
+                        connection.execute(text("DROP FUNCTION scene_deadline_stall()"))
                 print(
                     "PASS scene lifecycle: PostgreSQL CAS, TLS SET/ACK/state, atomic receipt links, real Core process restart, ON/OFF and zero physical devices",
                     flush=True,

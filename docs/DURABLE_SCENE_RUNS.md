@@ -19,7 +19,8 @@ receipt is `applied`. Negative/unknown outcomes stop progression. This conservat
 policy avoids choosing background authorization or automatic recovery semantics.
 
 The original run admits new actions for five minutes; retrying its creation never extends
-this window. Each admitted command keeps the existing original 30-second receipt lifetime.
+this window. Each scene command expires at the EARLIER of its original 30-second limit
+and the persisted scene deadline; retries never extend either limit.
 The run window is admission policy, not a guaranteed actuator deadline. Read operations
 continue after expiry and can recognize valid late-arriving receipt evidence only under
 the existing command lifetime rules. Timeout is not proof of OFF or non-execution.
@@ -128,3 +129,40 @@ identities. It removes only its generated resources and compares Docker inventor
 and after. It requires Docker already available; no privilege or production configuration
 changes are performed. The existing launcher/browser regression still runs afterward.
 Exact head and actual CI results are recorded in the draft PR after execution.
+
+## Deadline TOCTOU correction
+
+The initial implementation checked the five-minute window in GET before claiming an
+action. Review reproduced a late command after an SQL/scheduler stall. That earlier
+head is not considered deadline-safe. The corrected path:
+
+1. Locks the action row BEFORE the admission update, so a row-lock wait cannot preserve
+   an earlier eligibility result. The CAS predicate includes the persisted scene deadline
+   against both current application time and PostgreSQL `clock_timestamp()` evaluated
+   in the update. Transaction-start `CURRENT_TIMESTAMP` is deliberately not used.
+2. Rechecks live database/application admission after device locks and asynchronous
+   authorization, before creating command intent.
+3. Persists an immutable wire/receipt expiry capped to the scene deadline.
+4. Rechecks admission inside the publication task, after command/link commit and task
+   scheduling. The existing MQTT gateway then rechecks the capped expiry after its own
+   asynchronous authorization immediately before handing bytes to the MQTT client.
+
+Expired-before-reservation actions stay unclaimed. If expiration follows reservation
+but precedes command persistence, the attempt is blocked without a receipt. If it follows
+atomic command/link persistence, the receipt remains authoritative and can become timed_out;
+there is no retry, compensation or inferred OFF. Committing a claim can itself finish
+late, but that does not authorize subsequent command construction/publication.
+
+SQLite test admission conservatively rejects the boundary millisecond because its database
+clock has millisecond precision. PostgreSQL lock-wait tests freeze application time and
+use actual database time to demonstrate the second clock is not an old SQL parameter.
+The real TLS E2E adds an owned PostgreSQL BEFORE INSERT trigger that holds command/link
+persistence until the original deadline +165ms, then verifies zero SET messages, one
+bounded timed_out receipt and no replay. The trigger is confined to the disposable fixture
+and removed afterward; it is not a runtime migration or production trigger.
+
+These checks do not promise a physically atomic clock-check/network-write operation.
+A scheduler, client buffer or network can delay bytes after the last application check;
+MQTT publication cannot be unsent. The existing software relay rejects an expired wire
+command, while physical gates remain closed. Independent host/broker/device clock faults,
+hardware timing and physical OFF are not certified by these software tests.
