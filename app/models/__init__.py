@@ -31,3 +31,6 @@ __all__ = [
     "HouseMembershipORM",
     "RefreshSessionORM",
 ]
+
+from app.models.scene_run import SceneRunORM, SceneRunActionORM, SceneRunReceiptORM
+__all__ += ["SceneRunORM", "SceneRunActionORM", "SceneRunReceiptORM"]
