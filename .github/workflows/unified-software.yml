@@ -12,6 +12,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
+      BASELINE_WEB_SOURCE: ${{ github.workspace }}/web-before
       LIVE_CORE_SOURCE: ${{ github.workspace }}/core
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
@@ -22,8 +23,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: Janik77/kz-home-web
-          ref: 1a3226527e6b9501735b29e251a2982c7f5577f4
+          ref: eab81068be474455e1392dd3ed05cf4917abe02c
           path: web
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Janik77/kz-home-web
+          ref: 1a3226527e6b9501735b29e251a2982c7f5577f4
+          path: web-before
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
@@ -38,6 +45,7 @@ jobs:
           "$RUNNER_TEMP/unified-venv/bin/python" -m pip install -r ../core/requirements-dev.txt
           "$RUNNER_TEMP/unified-venv/bin/python" -m pip check
           npm ci
+          npm --prefix ../web-before ci
           npx playwright install chromium
       - name: Web typecheck, lint, unit tests and build
         working-directory: web
@@ -69,6 +77,8 @@ jobs:
           name: unified-software-evidence
           path: |
             web/test-results/confirmed-live-evidence.json
+            web/test-results/scene-live-evidence.json
+            web/test-results/scene-visual-*.json
             web/test-results/confirmed-live-preservation.json
             web/test-results/live-software-*.png
           if-no-files-found: warn
