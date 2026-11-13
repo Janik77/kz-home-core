@@ -140,13 +140,14 @@ class SceneCreate(BaseModel):
 
 
 class SceneUpdate(BaseModel):
+    expected_revision: int | None = Field(default=None, ge=1, strict=True)
     name: str | None = Field(default=None, min_length=1, max_length=255)
     house_id: str | None = None
     actions: list[DeviceAction] | None = None
 
 
 class SceneRead(SceneCreate, ReadSchema):
-    pass
+    revision: int = Field(ge=1)
 
 
 class AutomationTrigger(BaseModel):
@@ -228,6 +229,7 @@ class AutomationCreate(BaseModel):
 
 
 class AutomationUpdate(BaseModel):
+    expected_revision: int | None = Field(default=None, ge=1, strict=True)
     name: str | None = Field(default=None, min_length=1, max_length=255)
     house_id: str | None = None
     enabled: bool | None = None
@@ -239,7 +241,7 @@ class AutomationUpdate(BaseModel):
 
 
 class AutomationRead(AutomationCreate, ReadSchema):
-    pass
+    revision: int = Field(ge=1)
 
 
 class EventLogRead(BaseModel):

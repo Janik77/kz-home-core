@@ -12,6 +12,7 @@ from app.core import Settings
 from app.core.logging import configure_logging
 from app.core.errors import (
     ConflictError,
+    DefinitionRevisionConflict,
     EntityNotFoundError,
     InvalidReferenceError,
     UnavailableError,
@@ -274,6 +275,12 @@ def create_app(
         return JSONResponse(
             status_code=404, content={"detail": str(error) or "Entity not found"}
         )
+
+    @application.exception_handler(DefinitionRevisionConflict)
+    async def definition_conflict_handler(_, error: DefinitionRevisionConflict) -> JSONResponse:
+        return JSONResponse(status_code=409, content={
+            "detail": str(error), "code": "definition_revision_conflict"
+        })
 
     @application.exception_handler(ConflictError)
     async def conflict_handler(_, error: ConflictError) -> JSONResponse:
