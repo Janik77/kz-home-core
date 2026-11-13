@@ -1,9 +1,9 @@
 # Integrated durable software scenes (test only)
 
-This new branch `codex/integrated-durable-scenes` combines:
+This new branch `codex/integrated-scene-recovery` combines:
 - Core #39 runtime `f946a07f67f9ccb1e8f62c99860a0842bf3a062b` (including #37/#36).
 - Core #38 persistent tooling `4ce83504b80c15e951f011b868d68c5bc5aea178`.
-- Unmodified Web #18 `1a3226527e6b9501735b29e251a2982c7f5577f4`
+- Unmodified Web #19 `eab81068be474455e1392dd3ed05cf4917abe02c`
   (includes Web #17 `e3f82642c3271c8885f0de8dd3f3e2d3ee6b9dc4`).
 
 Runtime remains exactly Core #39; migration is **0010_scene_runs**. New integration
@@ -19,10 +19,10 @@ For a persistent profile use Ubuntu WSL with Docker Desktop as described below;
 do not use the orchestrator VM, kzhome-local or mentoring demo.
 
 ```bash
-git clone --branch codex/integrated-durable-scenes https://github.com/Janik77/kz-home-core.git core-integration
+git clone --branch codex/integrated-scene-recovery https://github.com/Janik77/kz-home-core.git core-integration
 git -C core-integration rev-parse HEAD
 git clone https://github.com/Janik77/kz-home-web.git web-integration
-git -C web-integration checkout --detach 1a3226527e6b9501735b29e251a2982c7f5577f4
+git -C web-integration checkout --detach eab81068be474455e1392dd3ed05cf4917abe02c
 python3.12 -m venv .venv-integration
 .venv-integration/bin/python -m pip install -r core-integration/requirements-dev.txt
 .venv-integration/bin/python -m pip check
@@ -58,7 +58,7 @@ new combination into a new profile. Preserve old data for separately reviewed mi
 
 ## Scene semantics and evidence
 
-Web #18 exposes confirmed caller-driven scene runs from Core #39. A run snapshots
+Web #19 exposes confirmed caller-driven scene runs from Core #39. A run snapshots
 a scene revision. Each ordered action needs explicit dispatch and applied ACK plus
 matching state; later actions cannot progress before prior confirmation.
 A scene is succeeded only when all its action receipts are applied.
@@ -66,7 +66,7 @@ See [DURABLE_SCENE_RUNS.md](DURABLE_SCENE_RUNS.md) for deadlines, unknown outcom
 permissions and lack of automatic replay/compensation.
 
 CI on this integration runs Core unit/PostgreSQL/MQTT coverage, Web unit/build and
-demo/contract browser suites, the actual Web #18 live browser stack, Core's actual
+demo/contract browser suites, the actual Web #19 live browser stack, Core's actual
 scene restart/TLS acceptance, and persistent-profile restart/backup/restore acceptance.
 The latter verifies scene ON before restart, explicit OFF after restart, exact
 per-action receipts and preserved terminal run history after restore. It also checks
@@ -77,3 +77,17 @@ are not exercised here. No user WSL, multi-day soak or power-loss qualification 
 claimed. Browser-only preferences are not DB backups; relay ON/replay memory resets
 on restart. Host sleep/network failure may stop the foreground launcher. An old
 green dependency run is not evidence for the final integration SHA.
+
+
+## Web recovery integration review status
+
+This branch is stacked on Core #40 `29e509595d8096f7bdc24a4470b8b0762603e42c`,
+with unmodified Web #19 `eab81068be474455e1392dd3ed05cf4917abe02c`.
+Independent Web review is pending; integration test success is not final acceptance.
+New preparation and recent run-ID history are read-only with respect to MQTT:
+only a separately authorized action dispatch may publish. The history belongs to
+the current browser context, is not browser-persisted, and does not replace durable
+Core receipts. Fresh preparation after unknown/timed-out outcomes requires explicit
+acknowledgment; a real revision conflict requires separately reviewing fresh data.
+Use a new profile (for example `recovery-profile`); existing Web #18 profile pins
+are not migrated or edited. Core runtime and migration remain #39 / `0010_scene_runs`.

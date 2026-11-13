@@ -89,14 +89,14 @@ persisted run; permissions and device guards are checked again at every dispatch
 
 Downgrade refuses nonempty scene-run history so evidence cannot silently be discarded.
 Existing endpoints/schema fields and MQTT envelopes are preserved; database migration
-is required before using this branch. The pinned Web #18 exposes this lifecycle in the integrated software branch.
+is required before using this branch. The pinned Web #19 exposes this lifecycle in the integrated software branch.
 Automation remains on its legacy unconfirmed path and is not implicitly migrated.
 
 ## Verification and dependencies
 
 Stacked on Core #37 `a2bc83aa2451590f71ac34f9aad1c7c328bccb19`, inheriting #36/#32/#33/#35
 and #34 broker coverage. Web fixture is pinned to
-`1a3226527e6b9501735b29e251a2982c7f5577f4` (Web #18 including #17) in this integration.
+`eab81068be474455e1392dd3ed05cf4917abe02c` (Web #19 including #17) in this integration.
 Persistent profile tooling comes from Core #38; integrated runtime is exactly
 Core #39 `f946a07f67f9ccb1e8f62c99860a0842bf3a062b`.
 Firmware protocol and gates are unchanged; Firmware #12 still pins older Core #36 and
@@ -168,3 +168,17 @@ A scheduler, client buffer or network can delay bytes after the last application
 MQTT publication cannot be unsent. The existing software relay rejects an expired wire
 command, while physical gates remain closed. Independent host/broker/device clock faults,
 hardware timing and physical OFF are not certified by these software tests.
+
+
+## Web recovery integration review status
+
+This branch is stacked on Core #40 `29e509595d8096f7bdc24a4470b8b0762603e42c`,
+with unmodified Web #19 `eab81068be474455e1392dd3ed05cf4917abe02c`.
+Independent Web review is pending; integration test success is not final acceptance.
+New preparation and recent run-ID history are read-only with respect to MQTT:
+only a separately authorized action dispatch may publish. The history belongs to
+the current browser context, is not browser-persisted, and does not replace durable
+Core receipts. Fresh preparation after unknown/timed-out outcomes requires explicit
+acknowledgment; a real revision conflict requires separately reviewing fresh data.
+Use a new profile (for example `recovery-profile`); existing Web #18 profile pins
+are not migrated or edited. Core runtime and migration remain #39 / `0010_scene_runs`.

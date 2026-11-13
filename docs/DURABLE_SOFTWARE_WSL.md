@@ -6,11 +6,11 @@ application, PostgreSQL, MQTT TLS transport and Python software Relay, plus the
 pinned Web Vite proxy. It is not firmware C execution or physical qualification.
 
 Dependency: Core #39, runtime commit
-`f946a07f67f9ccb1e8f62c99860a0842bf3a062b`, and Web #18 at
-`1a3226527e6b9501735b29e251a2982c7f5577f4`.
+`f946a07f67f9ccb1e8f62c99860a0842bf3a062b`, and Web #19 at
+`eab81068be474455e1392dd3ed05cf4917abe02c`.
 Profile tooling comes from Core #38 at `4ce83504b80c15e951f011b868d68c5bc5aea178`.
 Core #39 supplies caller-driven durable scene execution and migration `0010_scene_runs`.
-Web #18 includes Web #17; no Web source changes are made in this integration.
+Web #19 includes Web #17; no Web source changes are made in this integration.
 Production gates and MQTT envelopes are unchanged. Do not merge or deploy this test branch automatically.
 
 ## Isolation and prerequisites
@@ -44,9 +44,9 @@ Run these commands from a new, unused development directory in WSL. Clone paths,
 profile path and backup paths must not already contain another installation.
 
 ```bash
-git clone --branch codex/integrated-durable-scenes https://github.com/Janik77/kz-home-core.git core-durable
+git clone --branch codex/integrated-scene-recovery https://github.com/Janik77/kz-home-core.git core-durable
 git clone https://github.com/Janik77/kz-home-web.git web-durable
-git -C web-durable checkout --detach 1a3226527e6b9501735b29e251a2982c7f5577f4
+git -C web-durable checkout --detach eab81068be474455e1392dd3ed05cf4917abe02c
 cd core-durable
 python3.12 -m venv .venv-durable
 .venv-durable/bin/python -m pip install -r requirements-dev.txt
@@ -193,3 +193,17 @@ Mosquitto receives only six read-only file mounts: public CA certificate,
 server certificate/key, password hashes, ACL and broker configuration. It cannot
 see profile.json/JWT, the CA private key, backups or the entire profile directory.
 The server TLS private key remains necessary for the TLS listener.
+
+
+## Web recovery integration review status
+
+This branch is stacked on Core #40 `29e509595d8096f7bdc24a4470b8b0762603e42c`,
+with unmodified Web #19 `eab81068be474455e1392dd3ed05cf4917abe02c`.
+Independent Web review is pending; integration test success is not final acceptance.
+New preparation and recent run-ID history are read-only with respect to MQTT:
+only a separately authorized action dispatch may publish. The history belongs to
+the current browser context, is not browser-persisted, and does not replace durable
+Core receipts. Fresh preparation after unknown/timed-out outcomes requires explicit
+acknowledgment; a real revision conflict requires separately reviewing fresh data.
+Use a new profile (for example `recovery-profile`); existing Web #18 profile pins
+are not migrated or edited. Core runtime and migration remain #39 / `0010_scene_runs`.
