@@ -1,0 +1,130 @@
+# Durable software scene runs (caller-driven v1)
+
+This additive API is separate from legacy `POST /scenes/{id}/run`. The legacy route
+and automation engine are unchanged. No new automation/background execution identity,
+physical qualification, replay worker or compensating OFF command is introduced.
+
+## Supported scope and policy
+
+A run snapshots 1–16 ordered actions from one exact scene revision. Each must be a
+software relay with Boolean `on` and no other fields. Repeated devices are supported
+sequentially (e.g. ON then OFF). Physical inventory is rejected by the existing guards,
+even if mislabelled as software. Transport allowlist, connectivity, online status, house
+binding and command gates are checked again by CommandService at actual dispatch.
+
+Creation persists intent without sending anything. Each action requires an explicit
+caller request; only the original creator with current SCENE_RUN and DEVICE_CONTROL
+permissions may dispatch. A following action is admissible only after every preceding
+receipt is `applied`. Negative/unknown outcomes stop progression. This conservative
+policy avoids choosing background authorization or automatic recovery semantics.
+
+The original run admits new actions for five minutes; retrying its creation never extends
+this window. Each admitted command keeps the existing original 30-second receipt lifetime.
+The run window is admission policy, not a guaranteed actuator deadline. Read operations
+continue after expiry and can recognize valid late-arriving receipt evidence only under
+the existing command lifetime rules. Timeout is not proof of OFF or non-execution.
+
+## HTTP contract
+
+All endpoints are under `/v1/houses/{house_id}/scene-runs`:
+
+* `POST` with `Idempotency-Key` (16–128 ASCII alphanumeric/underscore/hyphen characters)
+  and `{"scene_id":"evening","expected_revision":3}` returns 201 with the persisted
+  run. Idempotency is scoped to house/user/key; same intent returns the same run,
+  different scene/revision gives 409. A stale definition revision gives the existing
+  `definition_revision_conflict` 409. A replay still works after definition deletion.
+* `GET /{run_id}` requires SCENE_READ and DEVICE_READ in that house. It derives results
+  from persisted claims and exact command receipts, expiring pending receipts via the
+  existing CommandService. It never publishes a command.
+* `POST /{run_id}/actions/{position}/dispatch` returns 202 with current run evidence.
+  It attempts only that zero-based action. Retrying an already claimed position returns
+  its evidence and never sends it again. A not-ready position returns 409. 202 is not
+  verified execution; inspect the action receipt and aggregate status.
+
+Response includes snapshot scene ID/revision, creation/admission-deadline timestamps,
+ordered device/Boolean intent, per-action status/failure code and full `CommandRead`
+receipt when one exists. It never includes user tokens, passwords or idempotency hashes.
+
+Action statuses: `ready`, `waiting`, `queued`, `dispatched`, `applied`, `failed`,
+`timed_out`, `blocked`, `dispatch_unknown`, `skipped`. `dispatch_unknown` includes the
+transient interval while another request owns a claim but has not yet persisted its
+command; it can later resolve to a receipt. Otherwise it stays unknown indefinitely.
+`blocked` with `dispatch_blocked` means admission failed with no linked receipt, not
+that an arbitrary external actor could not have changed the device. Later skipped
+positions are not attempted. The aggregate is `ready`, `running`, `succeeded`, `stopped`,
+`unknown` or `expired`. Only ALL actions with receipts `applied` yield `succeeded`.
+
+Applied requires the existing non-retained, correctly correlated applied ACK AND matching
+Boolean state within deadline. An accepted ACK, equal observed snapshot, desired intent,
+HTTP success or broker PUBACK does not qualify. This proves a software protocol result;
+it does not qualify physical hardware or prove the state remains unchanged forever.
+
+## Persistence, concurrency and restart
+
+Migration `0010_scene_runs` adds immutable run snapshots, per-position claims and exact
+receipt links. House/user idempotency uniqueness handles concurrent creation. A SQL
+compare-and-set on `claimed=false` admits only one dispatcher for each position.
+The claim is committed before entering network-capable code. CommandService persists
+command intent AND the action-to-command link in one transaction before MQTT publish;
+the existing single-pending-command-per-device guard remains in force. A direct command
+with a guessed stable key cannot masquerade as a scene receipt.
+
+Crash windows are explicit:
+
+1. Before claim: the caller can request that position normally.
+2. After claim, before atomic command/link commit: no receipt; `dispatch_unknown`, no
+   retry/replay. Some attempts can therefore remain unresolved even when nothing was sent.
+3. After command/link commit, before/during publish: GET recovers the same receipt. No
+   automatic republish; a lost delivery eventually times out. A command could have arrived.
+4. After valid ACK/state: terminal receipt persists; after a new Core process starts,
+   the creator may explicitly dispatch the next ready position within the original window.
+
+GET/POST recovery needs the run ID or original creation key. There is no scheduler,
+list/pagination UI, automatic resume or cancellation API in this stage. No distributed
+atomic scene, exactly-once delivery, rollback, hardware success or bounded physical OFF
+is promised. A new user-authorized run after an unknown outcome is a new intent and must
+not be silently created as an automatic retry. Scene edits/deletion do not rewrite a
+persisted run; permissions and device guards are checked again at every dispatch.
+
+Downgrade refuses nonempty scene-run history so evidence cannot silently be discarded.
+Existing endpoints/schema fields and MQTT envelopes are preserved; database migration
+is required before using this branch. Existing Web does not expose the new lifecycle yet.
+Automation remains on its legacy unconfirmed path and is not implicitly migrated.
+
+## Verification and dependencies
+
+Stacked on Core #37 `a2bc83aa2451590f71ac34f9aad1c7c328bccb19`, inheriting #36/#32/#33/#35
+and #34 broker coverage. Web fixture stays pinned to
+`fac23c233a1c86dad1661a9e2970cfca9450d00d`; newer Web versions are not covered by that pin.
+Firmware protocol and gates are unchanged; Firmware #12 still pins older Core #36 and
+must be independently tested before claiming this exact new pair is validated.
+
+Software tests use actual API/auth/migrated SQLite and explicit recording MQTT doubles:
+
+```sh
+APP_ENV=test DATABASE_URL=sqlite:///:memory: python -m pytest tests/test_scene_runs.py -q
+python -m ruff check .
+```
+
+Real PostgreSQL race/atomic-visibility/downgrade checks use the existing isolated-schema
+fixture, only with explicit `TEST_POSTGRESQL_URL` pointing to a disposable database:
+
+```sh
+APP_ENV=test DATABASE_URL="$TEST_POSTGRESQL_URL" python -m pytest tests/test_scene_runs_postgresql.py -v
+```
+
+Existing Core CI includes those tests, full regression, migration round trip and actual
+Mosquitto SUBACK/TLS. The unified CI additionally runs:
+
+```sh
+python -B tools/scene_run_live.py --web-root ../web
+```
+
+That command reuses the exact pinned Web fixture's owned PostgreSQL/Mosquitto TLS services,
+creates ephemeral credentials/certificates, runs Core in a separate subprocess, races
+same-action dispatch, checks actual SET/ACK/state plus SQL links, stops/restarts Core
+between ON and OFF, proves recovery without duplicate SET, and checks zero physical
+identities. It removes only its generated resources and compares Docker inventory before
+and after. It requires Docker already available; no privilege or production configuration
+changes are performed. The existing launcher/browser regression still runs afterward.
+Exact head and actual CI results are recorded in the draft PR after execution.
