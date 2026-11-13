@@ -59,6 +59,7 @@ def launch(profile, web):
                 "HOME",
                 "GITHUB_ACTIONS",
                 "DOCKER_CONTEXT",
+                "LD_LIBRARY_PATH",
                 "PYTHONDONTWRITEBYTECODE",
             )
         },
@@ -73,7 +74,7 @@ def launch(profile, web):
                     for line in diagnostic.splitlines():
                         if line.startswith("PROFILE_FAILURE "):
                             print(line, flush=True)
-                    raise AssertionError("Owned durable launcher exited")
+                    raise AssertionError(f"Owned durable launcher exited: {process.returncode}")
                 try:
                     if http.get("/core-api/ready").status_code == 200:
                         login(http, profile)
