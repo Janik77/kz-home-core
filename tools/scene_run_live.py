@@ -16,6 +16,14 @@ from uuid import uuid4
 from run_software_stack import CORE, validate_web
 
 
+def write_configuration(path, values):
+    # Exclusive creation: never overwrite an existing private file or symlink.
+    with open(
+        path, "x", opener=lambda name, flags: os.open(name, flags, 0o600)
+    ) as file:
+        json.dump(values, file)
+
+
 def serve(path, port):
     import uvicorn
     from app.core import Settings
@@ -83,26 +91,23 @@ async def run():
                     .id
                 )
         jwt_secret = secrets.token_urlsafe(48)
-        with configuration.open(
-            "x", opener=lambda path, flags: os.open(path, flags, 0o600)
-        ) as file:
-            json.dump(
-                dict(
-                    database_url=services.url,
-                    app_env="production",
-                    auth_jwt_secret=jwt_secret,
-                    mqtt_enabled=True,
-                    mqtt_host="localhost",
-                    mqtt_port=services.mqtt_port,
-                    mqtt_tls_enabled=True,
-                    mqtt_username="core_lab",
-                    mqtt_password=services.password,
-                    mqtt_client_id=services.name + "-scene-core",
-                    mqtt_software_devices=[["fixture_house", "fixture_relay"]],
-                    ca_file=str(services.directory / "ca.crt"),
-                ),
-                file,
-            )
+        write_configuration(
+            configuration,
+            dict(
+                database_url=services.url,
+                app_env="production",
+                auth_jwt_secret=jwt_secret,
+                mqtt_enabled=True,
+                mqtt_host="localhost",
+                mqtt_port=services.mqtt_port,
+                mqtt_tls_enabled=True,
+                mqtt_username="core_lab",
+                mqtt_password=services.password,
+                mqtt_client_id=services.name + "-scene-core",
+                mqtt_software_devices=[["fixture_house", "fixture_relay"]],
+                ca_file=str(services.directory / "ca.crt"),
+            ),
+        )
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
