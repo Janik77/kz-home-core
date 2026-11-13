@@ -6,11 +6,11 @@ application, PostgreSQL, MQTT TLS transport and Python software Relay, plus the
 pinned Web Vite proxy. It is not firmware C execution or physical qualification.
 
 Dependency: Core #39, runtime commit
-`f946a07f67f9ccb1e8f62c99860a0842bf3a062b`, and Web #19 at
-`eab81068be474455e1392dd3ed05cf4917abe02c`.
+`f946a07f67f9ccb1e8f62c99860a0842bf3a062b`, and Web #20 at
+`c2c4fa89a0da3652e8e0cca3629300ecfd7e658f`.
 Profile tooling comes from Core #38 at `4ce83504b80c15e951f011b868d68c5bc5aea178`.
 Core #39 supplies caller-driven durable scene execution and migration `0010_scene_runs`.
-Web #19 includes Web #17; no Web source changes are made in this integration.
+Web #20 includes Web #17; no Web source changes are made in this integration.
 Production gates and MQTT envelopes are unchanged. Do not merge or deploy this test branch automatically.
 
 ## Isolation and prerequisites
@@ -44,16 +44,16 @@ Run these commands from a new, unused development directory in WSL. Clone paths,
 profile path and backup paths must not already contain another installation.
 
 ```bash
-git clone --branch codex/integrated-scene-recovery https://github.com/Janik77/kz-home-core.git core-durable
+git clone --branch codex/integrated-scene-acknowledgement https://github.com/Janik77/kz-home-core.git core-durable
 git clone https://github.com/Janik77/kz-home-web.git web-durable
-git -C web-durable checkout --detach eab81068be474455e1392dd3ed05cf4917abe02c
+git -C web-durable checkout --detach c2c4fa89a0da3652e8e0cca3629300ecfd7e658f
 cd core-durable
 python3.12 -m venv .venv-durable
 .venv-durable/bin/python -m pip install -r requirements-dev.txt
 .venv-durable/bin/python -m pip check
 npm --prefix ../web-durable ci
 mkdir -p "$HOME/.local/share/kzhome-software"
-.venv-durable/bin/python -B tools/durable_software.py init --state "$HOME/.local/share/kzhome-software/recovery-profile"
+.venv-durable/bin/python -B tools/durable_software.py init --state "$HOME/.local/share/kzhome-software/acknowledgement-profile"
 ```
 
 Record `git rev-parse HEAD` with your backup and use the reviewed PR commit.
@@ -66,15 +66,15 @@ are read or modified. The profile is private (directory 0700, private files 0600
 ## Start, use, stop, restart
 
 ```bash
-.venv-durable/bin/python -B tools/durable_software.py start --state "$HOME/.local/share/kzhome-software/recovery-profile" --web-root ../web-durable
+.venv-durable/bin/python -B tools/durable_software.py start --state "$HOME/.local/share/kzhome-software/acknowledgement-profile" --web-root ../web-durable
 ```
 
 Keep this foreground process running. Open its printed loopback URL in your
-browser; the URL is also saved in recovery-profile/session.json. Login is
+browser; the URL is also saved in acknowledgement-profile/session.json. Login is
 owner@example.test; retrieve the generated password locally without posting it:
 
 ```bash
-.venv-durable/bin/python -c 'import json,pathlib; print(json.loads((pathlib.Path.home()/".local/share/kzhome-software/recovery-profile/profile.json").read_text())["password"])'
+.venv-durable/bin/python -c 'import json,pathlib; print(json.loads((pathlib.Path.home()/".local/share/kzhome-software/acknowledgement-profile/profile.json").read_text())["password"])'
 ```
 
 The Web port is stable for this profile, preserving the browser origin across
@@ -84,8 +84,8 @@ the owned database/broker containers. Data and profile remain. For a stopped
 launcher, these commands inspect or stop residual owned containers:
 
 ```bash
-.venv-durable/bin/python -B tools/durable_software.py status --state "$HOME/.local/share/kzhome-software/recovery-profile"
-.venv-durable/bin/python -B tools/durable_software.py stop --state "$HOME/.local/share/kzhome-software/recovery-profile"
+.venv-durable/bin/python -B tools/durable_software.py status --state "$HOME/.local/share/kzhome-software/acknowledgement-profile"
+.venv-durable/bin/python -B tools/durable_software.py stop --state "$HOME/.local/share/kzhome-software/acknowledgement-profile"
 ```
 
 An active launcher holds a profile lock: another start, stop or backup is refused.
@@ -106,7 +106,7 @@ First Ctrl-C and wait for the launcher to finish. Use a new backup destination:
 
 ```bash
 mkdir -p "$HOME/.local/share/kzhome-software/backups"
-.venv-durable/bin/python -B tools/durable_software.py backup --state "$HOME/.local/share/kzhome-software/recovery-profile" --destination "$HOME/.local/share/kzhome-software/backups/backup-001"
+.venv-durable/bin/python -B tools/durable_software.py backup --state "$HOME/.local/share/kzhome-software/acknowledgement-profile" --destination "$HOME/.local/share/kzhome-software/backups/backup-001"
 ```
 
 Backup briefly starts only this profile's database, takes a consistent pg_dump
@@ -126,8 +126,8 @@ your own authorized private backup destination.
 ## Restore into a NEW isolated profile
 
 ```bash
-.venv-durable/bin/python -B tools/durable_software.py restore --backup "$HOME/.local/share/kzhome-software/backups/backup-001" --state "$HOME/.local/share/kzhome-software/recovery-restored"
-.venv-durable/bin/python -B tools/durable_software.py start --state "$HOME/.local/share/kzhome-software/recovery-restored" --web-root ../web-durable
+.venv-durable/bin/python -B tools/durable_software.py restore --backup "$HOME/.local/share/kzhome-software/backups/backup-001" --state "$HOME/.local/share/kzhome-software/acknowledgement-restored"
+.venv-durable/bin/python -B tools/durable_software.py start --state "$HOME/.local/share/kzhome-software/acknowledgement-restored" --web-root ../web-durable
 ```
 
 Restore verifies the exact manifest whitelist, hashes and source pins before
@@ -197,13 +197,18 @@ The server TLS private key remains necessary for the TLS listener.
 
 ## Web recovery integration review status
 
-This branch is stacked on Core #40 `29e509595d8096f7bdc24a4470b8b0762603e42c`,
-with unmodified Web #19 `eab81068be474455e1392dd3ed05cf4917abe02c`.
-Independent Web review is pending; integration test success is not final acceptance.
+This branch is stacked on unchanged Core #41 `1bb981551d451c31935088dc60ca32f84a3e4ae3`,
+with unmodified Web #20 `c2c4fa89a0da3652e8e0cca3629300ecfd7e658f`.
+Independent review of Web #20 is complete. Its acknowledgement correction is
+integrated here; this does not authorize merge, deploy or physical operation.
 New preparation and recent run-ID history are read-only with respect to MQTT:
 only a separately authorized action dispatch may publish. The history belongs to
 the current browser context, is not browser-persisted, and does not replace durable
-Core receipts. Fresh preparation after unknown/timed-out outcomes requires explicit
-acknowledgment; a real revision conflict requires separately reviewing fresh data.
-Use a new profile (for example `recovery-profile`); existing Web #18 profile pins
+Core receipts. EVERY separate new preparation requires explicit acknowledgement that local
+history is incomplete, regardless of the selected run. Selecting successful run B
+after unknown/timed-out A must not remove this requirement. Local recent IDs are
+not a journal of all runs and never prove safe/OFF. Acknowledgement does not prove
+that an earlier action did not execute. A real revision conflict still requires
+separately reviewing fresh data.
+Use a new profile (for example `acknowledgement-profile`); existing earlier Web profile pins
 are not migrated or edited. Core runtime and migration remain #39 / `0010_scene_runs`.
