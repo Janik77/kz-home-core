@@ -147,7 +147,13 @@ class Profile:
             raise ValueError(
                 "Profile directory binding mismatch; use backup/restore, never copy"
             )
-        self.path_label = hashlib.sha256(str(self.path).encode()).hexdigest()
+        stat = self.path.stat()
+        directory_identity = f"{stat.st_dev}:{stat.st_ino}"
+        if self.state.get("directory_identity") != directory_identity:
+            raise ValueError("Profile directory identity mismatch; use backup/restore")
+        self.path_label = hashlib.sha256(
+            (str(self.path) + ":" + directory_identity).encode()
+        ).hexdigest()
         self.owner = self.state["owner"]
         if not re.fullmatch(r"[a-f0-9]{32}", self.owner):
             raise ValueError("Invalid profile identity")
@@ -429,6 +435,7 @@ def initialize(directory):
     state = dict(
         owner=uuid4().hex,
         profile_path=str(path),
+        directory_identity=f"{path.stat().st_dev}:{path.stat().st_ino}",
         core_sha=CORE_SHA,
         web_sha=WEB_SHA,
         web_port=free_port(),
@@ -514,6 +521,7 @@ def restore(source, destination):
     target = new_directory(destination)  # Never restore into any existing profile.
     saved["owner"] = uuid4().hex  # Never adopt the source's containers/network/volume.
     saved["profile_path"] = str(target)
+    saved["directory_identity"] = f"{target.stat().st_dev}:{target.stat().st_ino}"
     saved.pop("database_identity", None)
     saved["web_port"] = free_port()
     contents["profile.json"] = json.dumps(saved).encode()

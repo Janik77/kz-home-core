@@ -172,10 +172,11 @@ seeded starts and backups also require the exact pinned Alembic revision
 Restore records the newly created cluster identity and validates the restored
 migration before marking initialization complete.
 
-The profile JSON binds the canonical directory path, and every Docker resource
-also carries a hash of that path. Copying a profile directory is not a supported
+The profile JSON binds the absolute directory path and filesystem device/inode,
+and every Docker resource carries a hash of that binding. A replacement directory
+at the original pathname is also refused. Copying a profile directory is not a supported
 clone or relocation: the unchanged copy is refused before Docker access; editing
-its path field still fails the resource label check. Use backup/restore, which
+its path and directory-identity fields still fails the resource label check. Use backup/restore, which
 assigns a new owner/path and new resources. These checks prevent accidental
 adoption, not a malicious administrator with Docker/file write access.
 

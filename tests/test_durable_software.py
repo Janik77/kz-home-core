@@ -31,6 +31,7 @@ def test_foreign_container_is_never_adopted(tmp_path):
                 "core_sha": CORE_SHA,
                 "web_sha": WEB_SHA,
                 "profile_path": str(tmp_path),
+                "directory_identity": f"{tmp_path.stat().st_dev}:{tmp_path.stat().st_ino}",
             }
         )
     )
@@ -127,6 +128,7 @@ def test_missing_volume_backup_does_not_create_or_stop(tmp_path, monkeypatch):
                 "core_sha": CORE_SHA,
                 "web_sha": WEB_SHA,
                 "profile_path": str(tmp_path),
+                "directory_identity": f"{tmp_path.stat().st_dev}:{tmp_path.stat().st_ino}",
                 "database_identity": "123",
             }
         )
@@ -143,3 +145,19 @@ def test_missing_volume_backup_does_not_create_or_stop(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="storage missing"):
         profile.backup(tmp_path / "backup")
     assert not (tmp_path / "backup").exists()
+
+
+def test_replaced_directory_at_same_path_rejected(tmp_path):
+    (tmp_path / "profile.json").write_text(
+        json.dumps(
+            {
+                "owner": "a" * 32,
+                "core_sha": CORE_SHA,
+                "web_sha": WEB_SHA,
+                "profile_path": str(tmp_path),
+                "directory_identity": "different-inode",
+            }
+        )
+    )
+    with pytest.raises(ValueError, match="directory identity"):
+        Profile(tmp_path, ForeignDocker())

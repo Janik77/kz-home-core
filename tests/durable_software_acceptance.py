@@ -258,6 +258,9 @@ def main():
             raise AssertionError("Copied directory adopted original profile")
         metadata = json.loads((copied / "profile.json").read_text())
         metadata["profile_path"] = str(copied)
+        metadata["directory_identity"] = (
+            f"{copied.stat().st_dev}:{copied.stat().st_ino}"
+        )
         (copied / "profile.json").write_text(json.dumps(metadata))
         copy_profile = Profile(copied, docker)
         try:
