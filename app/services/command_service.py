@@ -23,6 +23,7 @@ from app.services.device_service import DeviceService
 from app.transports.base import Transport
 from app.transports.mqtt_models import AckEnvelope, StateEnvelope
 from app.services.command_clock import COMMAND_LIFETIME, command_clock
+from app.services.scene_run_admission import require_deadline
 from app.models import ControlCommandORM
 from app.services.control_authority import default_control_authority
 
@@ -123,6 +124,14 @@ class CommandService:
             raise UnavailableError("MQTT transport is unavailable")
         await self.transport.authorize_command(house_id, device_id)
         now = self.now()
+        scene_deadline = (
+            utc(require_deadline(session, scene_action[0], now))
+            if scene_action is not None else None
+        )
+        expires_at = (
+            min(now + COMMAND_LIFETIME, scene_deadline)
+            if scene_deadline else now + COMMAND_LIFETIME
+        )
         row = DeviceCommandORM(
             command_id=str(uuid4()),
             correlation_id=str(uuid4()),
@@ -134,7 +143,7 @@ class CommandService:
             status="queued",
             created_at=now,
             updated_at=now,
-            expires_at=now + COMMAND_LIFETIME,
+            expires_at=expires_at,
             dispatch_started_at=now,
         )
         session.add(row)
@@ -143,19 +152,20 @@ class CommandService:
             session.add(SceneRunReceiptORM(run_id=scene_action[0], position=scene_action[1], command_id=row.command_id))
         self.repository.save()  # IDs/intent/deadline durable BEFORE network I/O; release locks.
         identifier = row.command_id
-        try:
-            await asyncio.wait_for(
-                self.transport.send_command(
-                    house_id,
-                    device_id,
-                    {"on": on},
-                    command_id=identifier,
-                    correlation_id=row.correlation_id,
-                    timestamp=utc(row.created_at),
-                    expires_at=utc(row.expires_at),
-                ),
-                timeout=PUBLISH_TIMEOUT_SECONDS,
+
+        async def publish():
+            # Runs inside wait_for's task, after commit and scheduler delays.
+            # Gateway checks the bounded wire expiry again after authorization.
+            if scene_action is not None:
+                require_deadline(session, scene_action[0], self.now())
+            await self.transport.send_command(
+                house_id, device_id, {"on": on}, command_id=identifier,
+                correlation_id=row.correlation_id, timestamp=utc(row.created_at),
+                expires_at=utc(row.expires_at),
             )
+
+        try:
+            await asyncio.wait_for(publish(), timeout=PUBLISH_TIMEOUT_SECONDS)
         except asyncio.CancelledError:
             # Delivery may have occurred. The persisted deadline/idempotency survives cancellation.
             raise

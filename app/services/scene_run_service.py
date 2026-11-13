@@ -4,7 +4,7 @@ from datetime import timedelta
 from hashlib import sha256
 from uuid import uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import exists, select, update
 from sqlalchemy.exc import IntegrityError
 from app.core.errors import (
     ConflictError,
@@ -27,6 +27,7 @@ from app.schemas.scene_runs import SceneRunRead, SceneRunActionRead
 from app.services.command_service import CommandService, utc
 from app.services.command_clock import command_clock
 from app.services.onboarding_service import PhysicalBindingGuard
+from app.services.scene_run_admission import deadline_predicate
 
 
 class SceneRunService:
@@ -135,7 +136,15 @@ class SceneRunService:
         results = []
         predecessor_ok = True
         stopped = False
-        expired = utc(run.dispatch_deadline) <= self.now()
+        expired = utc(run.dispatch_deadline) <= self.now() or not self.session.scalar(
+            select(
+                exists(
+                    select(SceneRunORM.id).where(
+                        SceneRunORM.id == run_id, deadline_predicate(self.session)
+                    )
+                )
+            )
+        )
         commands = CommandService(
             CommandRepository(self.session), self.transport, now=self.now
         )
@@ -221,12 +230,29 @@ class SceneRunService:
             return view  # Retry retrieves evidence; never reissues a claimed action.
         if action.status != "ready":
             raise ConflictError("Action is not ready for dispatch")
+        # Acquire the action lock first: a predicate evaluated before waiting
+        # for a row lock would itself be stale when the UPDATE eventually runs.
+        self.session.scalar(
+            select(SceneRunActionORM.run_id)
+            .where(
+                SceneRunActionORM.run_id == run_id,
+                SceneRunActionORM.position == position,
+            )
+            .with_for_update()
+        )
         claimed = self.session.execute(
             update(SceneRunActionORM)
             .where(
                 SceneRunActionORM.run_id == run_id,
                 SceneRunActionORM.position == position,
                 SceneRunActionORM.claimed.is_(False),
+                exists(
+                    select(SceneRunORM.id).where(
+                        SceneRunORM.id == run_id,
+                        SceneRunORM.dispatch_deadline > self.now(),
+                        deadline_predicate(self.session),
+                    )
+                ),
             )
             .values(claimed=True)
         )
