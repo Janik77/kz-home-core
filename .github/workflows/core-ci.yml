@@ -79,3 +79,36 @@ jobs:
           tests/test_provisioning_postgresql.py
           tests/test_definition_postgresql.py
           tests/test_definition_migration.py
+
+  mqtt-suback:
+    name: Real Mosquitto SUBACK and TLS (loopback only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements-dev.txt
+      - name: Build pinned Mosquitto without installing a system service
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_root="$RUNNER_TEMP/suback-mosquitto"
+          mkdir -p "$source_root"
+          curl --fail --location --silent --show-error \
+            https://codeload.github.com/eclipse-mosquitto/mosquitto/tar.gz/766fa2c5a9bed6c65249cf555f430b982c417480 \
+            -o "$source_root/source.tar.gz"
+          echo "c68089994b371eb55eb111869d9b530d86df4612730338f68714ce73980ff6be  $source_root/source.tar.gz" | sha256sum --check
+          tar -xzf "$source_root/source.tar.gz" -C "$source_root"
+          broker_source="$source_root/mosquitto-766fa2c5a9bed6c65249cf555f430b982c417480"
+          cmake -S "$broker_source" -B "$source_root/build" \
+            -DWITH_TLS=ON -DWITH_CJSON=OFF -DDOCUMENTATION=OFF \
+            -DWITH_APPS=OFF -DWITH_CLIENTS=OFF -DWITH_PLUGINS=OFF
+          cmake --build "$source_root/build" --target mosquitto -j2
+          echo "SUBACK_MOSQUITTO_SOURCE=$broker_source" >> "$GITHUB_ENV"
+          echo "SUBACK_MOSQUITTO_BINARY=$source_root/build/src/mosquitto" >> "$GITHUB_ENV"
+      - name: Real broker grants, refusals, TLS and gateway readiness
+        run: python -m pytest tests/test_mqtt_suback_broker.py -v -ra
