@@ -12,7 +12,7 @@ from app.core.errors import (
     InvalidReferenceError,
     UnavailableError,
 )
-from app.models import DeviceCommandORM
+from app.models import DeviceCommandORM, SceneRunReceiptORM
 from app.repositories.command_repository import CommandRepository, PENDING
 from app.repositories.device_repository import DeviceRepository
 from app.repositories.physical_device_repository import PhysicalDeviceRepository
@@ -81,7 +81,8 @@ class CommandService:
         return CommandRead.model_validate(row)
 
     async def submit(
-        self, house_id: str, device_id: str, user_id: str, key: str, on: bool
+        self, house_id: str, device_id: str, user_id: str, key: str, on: bool,
+        *, scene_action: tuple[str, int] | None = None
     ) -> CommandRead:
         session = self.repository.session
         PhysicalBindingGuard(PhysicalDeviceRepository(session)).require_active(
@@ -95,6 +96,10 @@ class CommandService:
             house_id=house_id, requested_by=user_id, idempotency_hash=digest
         )
         if previous is not None:
+            if scene_action is not None:
+                link = session.get(SceneRunReceiptORM, scene_action)
+                if link is None or link.command_id != previous.command_id:
+                    raise ConflictError("Command key is not linked to this scene action")
             if previous.device_id != device_id or previous.requested_on != on:
                 raise ConflictError("Idempotency key was used for another intent")
             self.expire(previous)
@@ -133,6 +138,9 @@ class CommandService:
             dispatch_started_at=now,
         )
         session.add(row)
+        if scene_action is not None:
+            session.flush()
+            session.add(SceneRunReceiptORM(run_id=scene_action[0], position=scene_action[1], command_id=row.command_id))
         self.repository.save()  # IDs/intent/deadline durable BEFORE network I/O; release locks.
         identifier = row.command_id
         try:

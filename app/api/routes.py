@@ -52,6 +52,7 @@ from app.security import Permission, TokenCodec
 from app.api.dependencies import build_current_user_dependency
 from app.api.onboarding import build_onboarding_router
 from app.api.provisioning import build_provisioning_router
+from app.api.scene_runs import build_scene_run_router
 from app.api.commands import build_command_router
 from app.repositories.physical_device_repository import PhysicalDeviceRepository
 from app.services.onboarding_service import PhysicalBindingGuard
@@ -137,6 +138,8 @@ def build_router(
     router.include_router(
         build_command_router(get_session, get_current_user, require, transport)
     )
+
+    router.include_router(build_scene_run_router(get_session, get_current_user, require, transport))
 
     @router.get(
         "/v1/houses/{house_id}/me/permissions", response_model=HousePermissionsRead
