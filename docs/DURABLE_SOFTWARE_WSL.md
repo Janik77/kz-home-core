@@ -53,7 +53,7 @@ python3.12 -m venv .venv-durable
 .venv-durable/bin/python -m pip check
 npm --prefix ../web-durable ci
 mkdir -p "$HOME/.local/share/kzhome-software"
-.venv-durable/bin/python -B tools/durable_software.py init --state "$HOME/.local/share/kzhome-software/profile1"
+.venv-durable/bin/python -B tools/durable_software.py init --state "$HOME/.local/share/kzhome-software/recovery-profile"
 ```
 
 Record `git rev-parse HEAD` with your backup and use the reviewed PR commit.
@@ -66,15 +66,15 @@ are read or modified. The profile is private (directory 0700, private files 0600
 ## Start, use, stop, restart
 
 ```bash
-.venv-durable/bin/python -B tools/durable_software.py start --state "$HOME/.local/share/kzhome-software/profile1" --web-root ../web-durable
+.venv-durable/bin/python -B tools/durable_software.py start --state "$HOME/.local/share/kzhome-software/recovery-profile" --web-root ../web-durable
 ```
 
 Keep this foreground process running. Open its printed loopback URL in your
-browser; the URL is also saved in profile1/session.json. Login is
+browser; the URL is also saved in recovery-profile/session.json. Login is
 owner@example.test; retrieve the generated password locally without posting it:
 
 ```bash
-.venv-durable/bin/python -c 'import json,pathlib; print(json.loads((pathlib.Path.home()/".local/share/kzhome-software/profile1/profile.json").read_text())["password"])'
+.venv-durable/bin/python -c 'import json,pathlib; print(json.loads((pathlib.Path.home()/".local/share/kzhome-software/recovery-profile/profile.json").read_text())["password"])'
 ```
 
 The Web port is stable for this profile, preserving the browser origin across
@@ -84,8 +84,8 @@ the owned database/broker containers. Data and profile remain. For a stopped
 launcher, these commands inspect or stop residual owned containers:
 
 ```bash
-.venv-durable/bin/python -B tools/durable_software.py status --state "$HOME/.local/share/kzhome-software/profile1"
-.venv-durable/bin/python -B tools/durable_software.py stop --state "$HOME/.local/share/kzhome-software/profile1"
+.venv-durable/bin/python -B tools/durable_software.py status --state "$HOME/.local/share/kzhome-software/recovery-profile"
+.venv-durable/bin/python -B tools/durable_software.py stop --state "$HOME/.local/share/kzhome-software/recovery-profile"
 ```
 
 An active launcher holds a profile lock: another start, stop or backup is refused.
@@ -106,7 +106,7 @@ First Ctrl-C and wait for the launcher to finish. Use a new backup destination:
 
 ```bash
 mkdir -p "$HOME/.local/share/kzhome-software/backups"
-.venv-durable/bin/python -B tools/durable_software.py backup --state "$HOME/.local/share/kzhome-software/profile1" --destination "$HOME/.local/share/kzhome-software/backups/backup-001"
+.venv-durable/bin/python -B tools/durable_software.py backup --state "$HOME/.local/share/kzhome-software/recovery-profile" --destination "$HOME/.local/share/kzhome-software/backups/backup-001"
 ```
 
 Backup briefly starts only this profile's database, takes a consistent pg_dump
@@ -126,8 +126,8 @@ your own authorized private backup destination.
 ## Restore into a NEW isolated profile
 
 ```bash
-.venv-durable/bin/python -B tools/durable_software.py restore --backup "$HOME/.local/share/kzhome-software/backups/backup-001" --state "$HOME/.local/share/kzhome-software/profile-restored"
-.venv-durable/bin/python -B tools/durable_software.py start --state "$HOME/.local/share/kzhome-software/profile-restored" --web-root ../web-durable
+.venv-durable/bin/python -B tools/durable_software.py restore --backup "$HOME/.local/share/kzhome-software/backups/backup-001" --state "$HOME/.local/share/kzhome-software/recovery-restored"
+.venv-durable/bin/python -B tools/durable_software.py start --state "$HOME/.local/share/kzhome-software/recovery-restored" --web-root ../web-durable
 ```
 
 Restore verifies the exact manifest whitelist, hashes and source pins before

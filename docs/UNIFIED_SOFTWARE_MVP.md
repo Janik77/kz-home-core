@@ -42,8 +42,8 @@ Use a new directory and the same pinned checkouts above:
 
 ```bash
 mkdir -p "$HOME/.local/share/kzhome-software"
-.venv-integration/bin/python -B core-integration/tools/durable_software.py init --state "$HOME/.local/share/kzhome-software/scenes-profile"
-.venv-integration/bin/python -B core-integration/tools/durable_software.py start --state "$HOME/.local/share/kzhome-software/scenes-profile" --web-root web-integration
+.venv-integration/bin/python -B core-integration/tools/durable_software.py init --state "$HOME/.local/share/kzhome-software/recovery-profile"
+.venv-integration/bin/python -B core-integration/tools/durable_software.py start --state "$HOME/.local/share/kzhome-software/recovery-profile" --web-root web-integration
 ```
 
 Open the printed loopback URL. Login owner@example.test; generated password is in
