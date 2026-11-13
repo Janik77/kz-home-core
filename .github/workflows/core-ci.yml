@@ -77,3 +77,5 @@ jobs:
           tests/test_schema.py
           tests/test_onboarding_postgresql.py
           tests/test_provisioning_postgresql.py
+          tests/test_definition_postgresql.py
+          tests/test_definition_migration.py

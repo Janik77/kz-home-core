@@ -578,15 +578,16 @@ def build_router(
         session: Session = Depends(get_session),
         user: UserORM = Depends(get_current_user),
     ):
+        source_house = house_for(session, "scene", entity_id)
         require(
             session,
             user,
-            house_for(session, "scene", entity_id),
+            source_house,
             Permission.SCENE_MANAGE,
         )
         if data.house_id is not None:
             require(session, user, data.house_id, Permission.SCENE_MANAGE)
-        return scene_service(session).update(entity_id, data)
+        return scene_service(session).update(entity_id, data, expected_house_id=source_house)
 
     @router.delete("/scenes/{entity_id}", status_code=204)
     def delete_scene(
@@ -653,15 +654,16 @@ def build_router(
         session: Session = Depends(get_session),
         user: UserORM = Depends(get_current_user),
     ):
+        source_house = house_for(session, "automation", entity_id)
         require(
             session,
             user,
-            house_for(session, "automation", entity_id),
+            source_house,
             Permission.AUTOMATION_MANAGE,
         )
         if data.house_id is not None:
             require(session, user, data.house_id, Permission.AUTOMATION_MANAGE)
-        return automation_service(session).update(entity_id, data)
+        return automation_service(session).update(entity_id, data, expected_house_id=source_house)
 
     @router.delete("/automations/{entity_id}", status_code=204)
     def delete_automation(
@@ -684,13 +686,14 @@ def build_router(
         session: Session = Depends(get_session),
         user: UserORM = Depends(get_current_user),
     ):
+        source_house = house_for(session, "automation", entity_id)
         require(
             session,
             user,
-            house_for(session, "automation", entity_id),
+            source_house,
             Permission.AUTOMATION_MANAGE,
         )
-        return automation_service(session).set_enabled(entity_id, True)
+        return automation_service(session).set_enabled(entity_id, True, expected_house_id=source_house)
 
     @router.post("/automations/{entity_id}/disable", response_model=AutomationRead)
     def disable_automation(
@@ -698,13 +701,14 @@ def build_router(
         session: Session = Depends(get_session),
         user: UserORM = Depends(get_current_user),
     ):
+        source_house = house_for(session, "automation", entity_id)
         require(
             session,
             user,
-            house_for(session, "automation", entity_id),
+            source_house,
             Permission.AUTOMATION_MANAGE,
         )
-        return automation_service(session).set_enabled(entity_id, False)
+        return automation_service(session).set_enabled(entity_id, False, expected_house_id=source_house)
 
     @router.post("/automations/{entity_id}/run", response_model=AutomationRead)
     async def run_automation(
