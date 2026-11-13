@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: Janik77/kz-home-web
-          ref: fac23c233a1c86dad1661a9e2970cfca9450d00d
+          ref: 1a3226527e6b9501735b29e251a2982c7f5577f4
           path: web
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
@@ -46,6 +46,8 @@ jobs:
           npm run lint
           npm test
           npm run build
+          npm run test:e2e
+          npm run test:e2e:core
           python -m unittest discover -s e2e -p test_confirmed_live_evidence.py -v
       - name: Pull fixed disposable images before inventory baseline
         run: |
