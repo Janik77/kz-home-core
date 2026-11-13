@@ -87,6 +87,9 @@ async def run(
                     ]:
                         await asyncio.sleep(0.1)
                 with socket.socket() as sock:
+                    # Match Node listen semantics after a rapid restart (TIME_WAIT).
+                    # This does not permit sharing a port with an active listener.
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                     sock.bind(("127.0.0.1", web_port or 0))
                     port = sock.getsockname()[1]
                 environment = {

@@ -74,7 +74,9 @@ def launch(profile, web):
                     for line in diagnostic.splitlines():
                         if line.startswith("PROFILE_FAILURE "):
                             print(line, flush=True)
-                    raise AssertionError(f"Owned durable launcher exited: {process.returncode}")
+                    raise AssertionError(
+                        f"Owned durable launcher exited: {process.returncode}"
+                    )
                 try:
                     if http.get("/core-api/ready").status_code == 200:
                         login(http, profile)
@@ -147,7 +149,7 @@ def cleanup(profile, root):
     for suffix in ("-mqtt", "-pg"):
         name = profile.name + suffix
         if profile.owned("container", name):
-            profile.docker.run("rm", "-f", name)
+            profile.docker.run("rm", "-f", "-v", name)
     if profile.owned("volume", profile.name + "-pgdata"):
         profile.docker.run("volume", "rm", profile.name + "-pgdata")
     if profile.owned("network", profile.name):
