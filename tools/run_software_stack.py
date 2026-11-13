@@ -34,16 +34,25 @@ def validate_web(root):
     return root
 
 
-async def run(web, smoke):
+async def run(
+    web,
+    smoke,
+    *,
+    stack_factory=None,
+    provisioner=None,
+    on_ready=None,
+    login_hint=None,
+    web_port=None,
+):
     import aiomqtt
     import httpx
     from confirmed_live_stack import provision, stack
     from simulator.mqtt_relay import Relay
     from app.transports.mqtt_topics import TopicKind
 
-    async with stack(CORE) as values:
+    async with (stack_factory or stack)(CORE) as values:
         config, seed, ids, api, sql, migration = values
-        await provision(api, ids, seed)
+        await (provisioner or provision)(api, ids, seed)
         async with aiomqtt.Client(
             hostname=config.host,
             port=config.port,
@@ -63,7 +72,13 @@ async def run(web, smoke):
                         str(message.topic), bytes(message.payload), message.retain
                     )
 
+            async def heartbeat():
+                while True:
+                    await asyncio.sleep(60)
+                    await relay.send(TopicKind.STATUS, relay.status(True))
+
             receiver = asyncio.create_task(receive())
+            heartbeats = asyncio.create_task(heartbeat())
             vite = None
             try:
                 async with asyncio.timeout(10):
@@ -72,7 +87,7 @@ async def run(web, smoke):
                     ]:
                         await asyncio.sleep(0.1)
                 with socket.socket() as sock:
-                    sock.bind(("127.0.0.1", 0))
+                    sock.bind(("127.0.0.1", web_port or 0))
                     port = sock.getsockname()[1]
                 environment = {
                     key: os.environ[key]
@@ -101,7 +116,7 @@ async def run(web, smoke):
                     stderr=subprocess.DEVNULL,
                 )
                 url = f"http://127.0.0.1:{port}"
-                async with httpx.AsyncClient(base_url=url) as http:
+                async with httpx.AsyncClient(base_url=url, trust_env=False) as http:
                     async with asyncio.timeout(20):
                         while True:
                             if vite.poll() is not None:
@@ -117,6 +132,8 @@ async def run(web, smoke):
                         f"Owned software stack: {url}; migration {migration}",
                         flush=True,
                     )
+                    if on_ready:
+                        on_ready(url)
                     if smoke:
                         login = await http.post(
                             "/core-api/auth/login",
@@ -160,12 +177,16 @@ async def run(web, smoke):
                     else:
                         # Only temporary fixture credentials, deliberately withheld in CI smoke mode.
                         print(
-                            f"Login owner@example.test / {seed['password']}\nCtrl-C stops this owned stack and removes its data.",
+                            login_hint
+                            or f"Login owner@example.test / {seed['password']}\nCtrl-C stops this owned stack and removes its data.",
                             flush=True,
                         )
                         while True:
                             if vite.poll() is not None:
                                 raise RuntimeError("Owned Vite process exited")
+                            if heartbeats.done():
+                                await heartbeats
+                                raise RuntimeError("Software MQTT heartbeat stopped")
                             if receiver.done():
                                 await receiver
                                 raise RuntimeError("Software MQTT receiver stopped")
@@ -182,7 +203,8 @@ async def run(web, smoke):
                         os.killpg(vite.pid, signal.SIGKILL)
                         await asyncio.to_thread(vite.wait, timeout=5)
                 receiver.cancel()
-                await asyncio.gather(receiver, return_exceptions=True)
+                heartbeats.cancel()
+                await asyncio.gather(receiver, heartbeats, return_exceptions=True)
 
 
 def main():
