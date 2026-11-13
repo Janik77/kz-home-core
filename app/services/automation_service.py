@@ -3,7 +3,7 @@ from collections.abc import Callable
 from datetime import datetime, time
 from typing import Any
 
-from app.core.errors import InvalidReferenceError
+from app.core.errors import DefinitionRevisionConflict, InvalidReferenceError
 from app.events import Event, EventBus
 from app.repositories.automation_repository import AutomationRepository
 from app.repositories.house_repository import HouseRepository
@@ -70,21 +70,45 @@ class AutomationService:
         self._validate(data)
         return AutomationRead.model_validate(self.repository.create(data.model_dump()))
 
-    def update(self, entity_id: str, data: AutomationUpdate) -> AutomationRead:
-        values = data.model_dump(exclude_unset=True, exclude_none=True)
+    def update(
+        self,
+        entity_id: str,
+        data: AutomationUpdate,
+        *,
+        expected_house_id: str | None = None,
+    ) -> AutomationRead:
+        values = data.model_dump(
+            exclude_unset=True, exclude_none=True, exclude={"expected_revision"}
+        )
         current = self.get(entity_id)
+        if (
+            data.expected_revision is not None
+            and data.expected_revision != current.revision
+        ):
+            raise DefinitionRevisionConflict()
         candidate = AutomationCreate.model_validate(
             {**current.model_dump(exclude={"created_at", "updated_at"}), **values}
         )
         self._validate(candidate)
-        return AutomationRead.model_validate(self.repository.update(entity_id, values))
+        return AutomationRead.model_validate(
+            self.repository.update(
+                entity_id,
+                values,
+                expected_revision=current.revision,
+                expected_house_id=expected_house_id,
+            )
+        )
 
     def delete(self, entity_id: str) -> None:
         self.repository.delete(entity_id)
 
-    def set_enabled(self, entity_id: str, enabled: bool) -> AutomationRead:
+    def set_enabled(
+        self, entity_id: str, enabled: bool, *, expected_house_id: str | None = None
+    ) -> AutomationRead:
         return AutomationRead.model_validate(
-            self.repository.update(entity_id, {"enabled": enabled})
+            self.repository.update(
+                entity_id, {"enabled": enabled}, expected_house_id=expected_house_id
+            )
         )
 
     async def manual_run(self, entity_id: str) -> AutomationRead:

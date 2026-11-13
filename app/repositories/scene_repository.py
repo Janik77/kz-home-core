@@ -1,10 +1,10 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.models import SceneORM
-from app.repositories.base import Repository
+from app.repositories.definition_repository import DefinitionRepository
 
 
-class SceneRepository(Repository[SceneORM]):
+class SceneRepository(DefinitionRepository[SceneORM]):
     def __init__(self, session: Session) -> None:
         super().__init__(session, SceneORM)
 

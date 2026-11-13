@@ -12,3 +12,8 @@ class InvalidReferenceError(Exception):
 
 class UnavailableError(Exception):
     pass
+
+
+class DefinitionRevisionConflict(ConflictError):
+    def __init__(self):
+        super().__init__("Definition changed; reload before saving")
