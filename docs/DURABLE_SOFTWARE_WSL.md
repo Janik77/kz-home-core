@@ -29,7 +29,9 @@ from existing installations.
 
 Each profile creates its own random kzsoft-<UUID> container/network/volume names
 and verifies its ownership label before stop/start/inspect operations. PostgreSQL
-and Mosquitto use an internal network and random loopback-only published ports.
+and Mosquitto use a dedicated bridge and random loopback-only published ports.
+The bridge retains Docker's standard routing so host port publication works;
+no network policy or daemon configuration is changed.
 Core and Vite bind loopback. Only the software fixture relay is allowlisted; no
 physical device is seeded and broker credentials cannot publish control authority.
 Ownership labels are collision protection, not a boundary against a Docker admin.

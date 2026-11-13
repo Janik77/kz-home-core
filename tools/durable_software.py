@@ -116,12 +116,15 @@ class Docker:
             )
 
     def run(self, *args, check=True, data=None):
-        result = subprocess.run(
-            ["docker", "--context", self.context, *args],
-            input=data,
-            capture_output=True,
-            timeout=180,
-        )
+        try:
+            result = subprocess.run(
+                ["docker", "--context", self.context, *args],
+                input=data,
+                capture_output=True,
+                timeout=180,
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("Owned Docker operation timed out") from None
         if check and result.returncode:
             raise RuntimeError(
                 "Owned Docker operation failed; no automatic deletion performed"
@@ -173,7 +176,7 @@ class Profile:
 
     def ensure_storage(self):
         for kind, name, extra in (
-            ("network", self.name, ["--internal"]),
+            ("network", self.name, []),
             ("volume", self.name + "-pgdata", []),
         ):
             if not self.owned(kind, name):
