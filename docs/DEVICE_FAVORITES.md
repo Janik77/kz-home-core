@@ -93,12 +93,12 @@ favorites downgrade drops only the new table/index and preserves earlier data.
 
 New disposable/fresh persistent test profiles use this migration and an exact new runtime
 pin, while all existing path/inode/database/volume/source binding checks remain enabled.
-Old #42 profiles/backups are not upgraded, adopted, reset or rebound by this task; their
-old source/migration versions are refused. Never edit profile.json or identity rows to
-force compatibility. A user profile migration/backup-compatibility workflow is separate
-work and has not been performed. Existing tests verify backup/restore only for a newly
-created owned profile of this branch, including favorites and independent restored-copy
-changes; they do not certify an update of any user's WSL installation.
+Ordinary restore still refuses cross-version inputs. This integration adds one explicit,
+isolated upgrade from a trusted #42 backup into a NEW profile, with actual source revision
+checks and old-table preservation checks. See [SOFTWARE_UPGRADE.md](SOFTWARE_UPGRADE.md)
+for exact pins, fresh setup, supported upgrade and rollback. Identity-less old drafts and
+all other source versions remain unsupported; never edit identity fields to force access.
+CI verifies this on disposable services, not on any user's WSL installation.
 
 ## Checks and boundaries
 

@@ -89,16 +89,16 @@ persisted run; permissions and device guards are checked again at every dispatch
 
 Downgrade refuses nonempty scene-run history so evidence cannot silently be discarded.
 Existing endpoints/schema fields and MQTT envelopes are preserved; database migration
-is required before using this branch. The pinned Web #20 exposes this lifecycle in the integrated software branch.
+is required before using this branch. The pinned Web #23 exposes this lifecycle in the integrated software branch.
 Automation remains on its legacy unconfirmed path and is not implicitly migrated.
 
 ## Verification and dependencies
 
 Stacked on Core #37 `a2bc83aa2451590f71ac34f9aad1c7c328bccb19`, inheriting #36/#32/#33/#35
 and #34 broker coverage. Web fixture is pinned to
-`c2c4fa89a0da3652e8e0cca3629300ecfd7e658f` (Web #20 including #17) in this integration.
+`1dec0a82577bf306fefa6f40010b2ff60f541648` (Web #23 including #17) in this integration.
 Persistent profile tooling comes from Core #38; integrated runtime is exactly
-Core #39 `f946a07f67f9ccb1e8f62c99860a0842bf3a062b`.
+Core #43 `5b87f4b71a7a2a99d4dd3d288c7f1ec76ab781f2`.
 Firmware protocol and gates are unchanged; Firmware #12 still pins older Core #36 and
 must be independently tested before claiming this exact new pair is validated.
 
@@ -170,20 +170,9 @@ command, while physical gates remain closed. Independent host/broker/device cloc
 hardware timing and physical OFF are not certified by these software tests.
 
 
-## Web recovery integration review status
 
-This branch is stacked on unchanged Core #41 `1bb981551d451c31935088dc60ca32f84a3e4ae3`,
-with unmodified Web #20 `c2c4fa89a0da3652e8e0cca3629300ecfd7e658f`.
-Independent review of Web #20 is complete. Its acknowledgement correction is
-integrated here; this does not authorize merge, deploy or physical operation.
-New preparation and recent run-ID history are read-only with respect to MQTT:
-only a separately authorized action dispatch may publish. The history belongs to
-the current browser context, is not browser-persisted, and does not replace durable
-Core receipts. EVERY separate new preparation requires explicit acknowledgement that local
-history is incomplete, regardless of the selected run. Selecting successful run B
-after unknown/timed-out A must not remove this requirement. Local recent IDs are
-not a journal of all runs and never prove safe/OFF. Acknowledgement does not prove
-that an earlier action did not execute. A real revision conflict still requires
-separately reviewing fresh data.
-Use a new profile (for example `acknowledgement-profile`); existing earlier Web profile pins
-are not migrated or edited. Core runtime and migration remain #39 / `0010_scene_runs`.
+## Current integration
+
+Exact setup, persistent profiles, and the explicitly supported #42 backup upgrade/rollback
+are in [SOFTWARE_UPGRADE.md](SOFTWARE_UPGRADE.md). Current schema is 0011_device_favorites;
+the scene lifecycle above is unchanged. Web #23 independent review is pending.

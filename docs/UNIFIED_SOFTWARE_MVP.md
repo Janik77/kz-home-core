@@ -1,98 +1,23 @@
-# Integrated durable software scenes (test only)
+# Integrated favorites software stack
 
-This new branch `codex/integrated-scene-acknowledgement` combines:
-- Core #39 runtime `f946a07f67f9ccb1e8f62c99860a0842bf3a062b` (including #37/#36).
-- Core #38 persistent tooling `4ce83504b80c15e951f011b868d68c5bc5aea178`.
-- Unmodified Web #20 `c2c4fa89a0da3652e8e0cca3629300ecfd7e658f`
-  (includes Web #17 `e3f82642c3271c8885f0de8dd3f3e2d3ee6b9dc4`).
+The supported new combination is Core #43
+`5b87f4b71a7a2a99d4dd3d288c7f1ec76ab781f2`, migration
+`0011_device_favorites`, and unmodified Web #23
+`1dec0a82577bf306fefa6f40010b2ff60f541648`.
+The source Core tooling's intermediate pin 27b20c7 is replaced with the actual final
+reviewed Core source; runtime files are unchanged. Web review is still pending.
 
-Runtime remains exactly Core #39; migration is **0010_scene_runs**. New integration
-commits update tooling/pins, documentation and CI acceptance. Source branches and
-main are not changed. No merge, deploy or physical qualification is implied.
-The draft PR records the final tested commit and fresh CI links.
+Use [SOFTWARE_UPGRADE.md](SOFTWARE_UPGRADE.md) as the single setup/run/stop guide.
+It separates a NEW profile from the narrowly supported #42 -> #43 upgrade and
+rollback. Do not use earlier launch instructions or manually alter identity fields.
 
-## Fresh checkout and disposable smoke
-
-Use an ordinary Linux user with Python 3.12/venv, Node 24/npm and already-authorized
-Docker. No sudo, extra privileges, production credentials, .env or device mounts.
-For a persistent profile use Ubuntu WSL with Docker Desktop as described below;
-do not use the orchestrator VM, kzhome-local or mentoring demo.
-
+For disposable smoke after setup:
 ```bash
-git clone --branch codex/integrated-scene-acknowledgement https://github.com/Janik77/kz-home-core.git core-integration
-git -C core-integration rev-parse HEAD
-git clone https://github.com/Janik77/kz-home-web.git web-integration
-git -C web-integration checkout --detach c2c4fa89a0da3652e8e0cca3629300ecfd7e658f
-python3.12 -m venv .venv-integration
-.venv-integration/bin/python -m pip install -r core-integration/requirements-dev.txt
-.venv-integration/bin/python -m pip check
-npm --prefix web-integration ci
-docker pull postgres:17-bookworm@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6ef6225b3e5d59c7afb35e994
-docker pull eclipse-mosquitto:2@sha256:75d6662dee52c947dc9dd9c29f1d8d7ffef78ddaf38001caa09755681e8bbc98
-docker pull alpine/openssl:latest@sha256:6821afa2476e11be343f29275f2ca24291720ff0a7148bd131fd8e314ff26d9e
-.venv-integration/bin/python -B core-integration/tools/run_software_stack.py --web-root web-integration --smoke-test
+.venv-new/bin/python -B core-new/tools/run_software_stack.py --web-root web-new --smoke-test
 ```
 
-Record/pin the exact reviewed integration SHA from the PR before use. The smoke
-fixture deletes ONLY its own temporary data. It is not the persistent mode.
-
-## Persistent profile
-
-Use a new directory and the same pinned checkouts above:
-
-```bash
-mkdir -p "$HOME/.local/share/kzhome-software"
-.venv-integration/bin/python -B core-integration/tools/durable_software.py init --state "$HOME/.local/share/kzhome-software/acknowledgement-profile"
-.venv-integration/bin/python -B core-integration/tools/durable_software.py start --state "$HOME/.local/share/kzhome-software/acknowledgement-profile" --web-root web-integration
-```
-
-Open the printed loopback URL. Login owner@example.test; generated password is in
-the private profile.json. Ctrl-C stops owned processes/containers and retains data.
-See [DURABLE_SOFTWARE_WSL.md](DURABLE_SOFTWARE_WSL.md) for exact stop, backup,
-restore, credential retrieval and protection rules.
-
-There is **no automatic migration** of old draft profiles/backups to this new runtime
-pin. Do not edit source pins, directory path/device/inode bindings, database identity
-or resource labels to force startup. Restore only a trusted backup from the supported
-new combination into a new profile. Preserve old data for separately reviewed migration.
-
-## Scene semantics and evidence
-
-Web #20 exposes confirmed caller-driven scene runs from Core #39. A run snapshots
-a scene revision. Each ordered action needs explicit dispatch and applied ACK plus
-matching state; later actions cannot progress before prior confirmation.
-A scene is succeeded only when all its action receipts are applied.
-See [DURABLE_SCENE_RUNS.md](DURABLE_SCENE_RUNS.md) for deadlines, unknown outcomes,
-permissions and lack of automatic replay/compensation.
-
-CI on this integration runs Core unit/PostgreSQL/MQTT coverage, Web unit/build and
-demo/contract browser suites, the actual Web #20 live browser stack, Core's actual
-scene restart/TLS acceptance, and persistent-profile restart/backup/restore acceptance.
-The latter verifies scene ON before restart, explicit OFF after restart, exact
-per-action receipts and preserved terminal run history after restore. It also checks
-missing/foreign volumes, copied profiles and original Docker inventory preservation.
-
-Only the existing Python software Relay is used. Firmware C and physical relays
-are not exercised here. No user WSL, multi-day soak or power-loss qualification is
-claimed. Browser-only preferences are not DB backups; relay ON/replay memory resets
-on restart. Host sleep/network failure may stop the foreground launcher. An old
-green dependency run is not evidence for the final integration SHA.
-
-
-## Web recovery integration review status
-
-This branch is stacked on unchanged Core #41 `1bb981551d451c31935088dc60ca32f84a3e4ae3`,
-with unmodified Web #20 `c2c4fa89a0da3652e8e0cca3629300ecfd7e658f`.
-Independent review of Web #20 is complete. Its acknowledgement correction is
-integrated here; this does not authorize merge, deploy or physical operation.
-New preparation and recent run-ID history are read-only with respect to MQTT:
-only a separately authorized action dispatch may publish. The history belongs to
-the current browser context, is not browser-persisted, and does not replace durable
-Core receipts. EVERY separate new preparation requires explicit acknowledgement that local
-history is incomplete, regardless of the selected run. Selecting successful run B
-after unknown/timed-out A must not remove this requirement. Local recent IDs are
-not a journal of all runs and never prove safe/OFF. Acknowledgement does not prove
-that an earlier action did not execute. A real revision conflict still requires
-separately reviewing fresh data.
-Use a new profile (for example `acknowledgement-profile`); existing earlier Web profile pins
-are not migrated or edited. Core runtime and migration remain #39 / `0010_scene_runs`.
+This smoke mode deletes its own temporary data. Persistent profiles retain data on
+Ctrl-C. CI verifies the exact integration head (recorded in the draft PR), Core
+regressions, actual PostgreSQL/MQTT TLS scenes, persistent restart/backup/restore,
+supported upgrade/rollback, and pinned Web unit/demo/contract/live tests. Main and
+source branches remain untouched. No merge/deploy or physical qualification.

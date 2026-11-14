@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: Janik77/kz-home-web
-          ref: c2c4fa89a0da3652e8e0cca3629300ecfd7e658f
+          ref: 1dec0a82577bf306fefa6f40010b2ff60f541648
           path: web
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -79,6 +79,9 @@ jobs:
             web/test-results/confirmed-live-evidence.json
             web/test-results/scene-live-evidence.json
             web/test-results/scene-visual-*.json
+            web/test-results/live-space-*.png
+            web/test-results/live-space-*.webm
+            web/test-results/live-favorites-*
             web/test-results/confirmed-live-preservation.json
             web/test-results/live-software-*.png
           if-no-files-found: warn
