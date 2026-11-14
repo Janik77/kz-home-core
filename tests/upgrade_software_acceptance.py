@@ -241,6 +241,35 @@ def main():
         profiles.append(manager.Profile(root / "wrong-target", docker))
         assert not (root / "wrong-target" / "initialized").exists()
 
+        # Simulate failure after the actual additive migration, before initialization.
+        original_migrate = manager.migrate_upgrade
+
+        def fail_after_migration(profile):
+            original_migrate(profile)
+            raise RuntimeError("Injected test-only post-migration failure")
+
+        manager.migrate_upgrade = fail_after_migration
+        try:
+            try:
+                manager.upgrade(backup, root / "migration-failed", old_core)
+            except RuntimeError:
+                pass
+            else:
+                raise AssertionError("Injected failure did not stop upgrade")
+        finally:
+            manager.migrate_upgrade = original_migrate
+        assert not (root / "migration-failed" / "initialized").exists()
+        cli(
+            manager.CORE,
+            "start",
+            "--state",
+            root / "migration-failed",
+            "--web-root",
+            web,
+            success=False,
+        )
+        profiles.append(manager.Profile(root / "migration-failed", docker))
+
         attempt(backup, root / "upgraded", success=True)
         upgraded = manager.Profile(root / "upgraded", docker)
         profiles.append(upgraded)
@@ -361,7 +390,13 @@ def main():
     finally:
         if process is not None:
             halt(process)
-        for name in ("partial", "wrong-target", "upgraded", "restored"):
+        for name in (
+            "partial",
+            "wrong-target",
+            "migration-failed",
+            "upgraded",
+            "restored",
+        ):
             path = root / name
             if (path / "profile.json").is_file() and all(
                 p.path != path for p in profiles
