@@ -170,3 +170,54 @@ def test_postgresql_action_lock_wait_rechecks_live_database_deadline(pg_definiti
         assert not session.get(SceneRunActionORM, (run.id, 0)).claimed
         assert session.query(DeviceCommandORM).count() == 0
         assert session.query(SceneRunReceiptORM).count() == 0
+
+
+def test_postgresql_server_distinct_keys_have_one_active_scene(pg_definitions):
+    """Two concurrent browser intentions must not create parallel executors."""
+    from app.core.errors import ConflictError
+    from app.models import HouseMembershipORM
+
+    with Session(pg_definitions) as session:
+        user = UserService(UserRepository(session)).create(
+            "server-race@example.test", "scene-race-test-password"
+        )
+        user_id = user.id
+        session.add(
+            HouseMembershipORM(
+                id=str(uuid4()), user_id=user_id, house_id="a", role="owner"
+            )
+        )
+        session.get(SceneORM, "scene").actions = [
+            {"device_id": "fixture", "state": {"on": True}}
+        ]
+        session.commit()
+    barrier = Barrier(2)
+
+    class Wire:
+        connected = True
+
+        async def authorize_command(self, *args):
+            pass
+
+    def create(_):
+        with Session(pg_definitions, expire_on_commit=False) as session:
+            barrier.wait(timeout=10)
+            try:
+                result = asyncio.run(
+                    SceneRunService(session, Wire()).create_server(
+                        "a",
+                        user_id,
+                        str(uuid4()),
+                        SceneRunCreate(scene_id="scene", expected_revision=1),
+                        str(uuid4()),
+                    )
+                )
+                return result.id
+            except ConflictError:
+                return "conflict"
+
+    with ThreadPoolExecutor(2) as workers:
+        results = list(workers.map(create, range(2)))
+    assert results.count("conflict") == 1
+    with Session(pg_definitions) as session:
+        assert session.query(SceneRunORM).count() == 1

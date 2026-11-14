@@ -373,6 +373,91 @@ async def run():
                             )
                         )
                         connection.execute(text("DROP FUNCTION scene_deadline_stall()"))
+                # New server endpoint: one request drives both actions without
+                # any per-action HTTP dispatch, using real MQTT TLS evidence.
+                await relay.send(TopicKind.STATUS, relay.status(True))
+                async with asyncio.timeout(10):
+                    while not (await api.request("GET", "/devices/fixture_relay"))[
+                        "online"
+                    ]:
+                        await asyncio.sleep(0.1)
+                response = await http.post(
+                    base + "/execute",
+                    json={"scene_id": "durable_scene", "expected_revision": 1},
+                    headers={"Idempotency-Key": str(uuid4())},
+                )
+                assert response.status_code == 201, response.text
+                server_id = response.json()["id"]
+                for expected_on in (True, False):
+                    message = await asyncio.wait_for(mqtt.messages.__anext__(), 10)
+                    envelope = CommandEnvelope.model_validate_json(
+                        bytes(message.payload)
+                    )
+                    assert envelope.state == {"on": expected_on} and not message.retain
+                    await relay.handle(
+                        str(message.topic), bytes(message.payload), message.retain
+                    )
+                async with asyncio.timeout(10):
+                    while (await http.get(f"{base}/{server_id}")).json()[
+                        "status"
+                    ] != "succeeded":
+                        await asyncio.sleep(0.1)
+                async with asyncio.timeout(10):
+                    while True:
+                        with engine.connect() as connection:
+                            finished = connection.scalar(
+                                text(
+                                    "SELECT execution_finished FROM scene_runs WHERE id=:id"
+                                ),
+                                {"id": server_id},
+                            )
+                        if finished:
+                            break
+                        await asyncio.sleep(0.1)
+                # Kill the actual Core process while first command lacks ACK/state.
+                # Restart must neither resend it nor advance the next action.
+                crash_key = str(uuid4())
+                response = await http.post(
+                    base + "/execute",
+                    json={"scene_id": "durable_scene", "expected_revision": 1},
+                    headers={"Idempotency-Key": crash_key},
+                )
+                assert response.status_code == 201, response.text
+                crash_id = response.json()["id"]
+                message = await asyncio.wait_for(mqtt.messages.__anext__(), 10)
+                first_command = CommandEnvelope.model_validate_json(
+                    bytes(message.payload)
+                )
+                assert first_command.state == {"on": True}
+                process.kill()
+                await asyncio.to_thread(process.wait, timeout=5)
+                await start()
+                replay = await http.post(
+                    base + "/execute",
+                    json={"scene_id": "durable_scene", "expected_revision": 1},
+                    headers={"Idempotency-Key": crash_key},
+                )
+                assert replay.status_code == 201 and replay.json()["id"] == crash_id
+                async with asyncio.timeout(40):
+                    while (await http.get(f"{base}/{crash_id}")).json()[
+                        "status"
+                    ] != "unknown":
+                        await asyncio.sleep(0.2)
+                crash_view = (await http.get(f"{base}/{crash_id}")).json()
+                assert crash_view["actions"][1]["receipt"] is None
+                assert crash_view["actions"][1]["status"] == "skipped"
+                try:
+                    await asyncio.wait_for(mqtt.messages.__anext__(), 1)
+                except TimeoutError:
+                    pass
+                else:
+                    raise AssertionError(
+                        "Server scene replayed or advanced after process crash"
+                    )
+                print(
+                    "PASS server scenes: one POST, two TLS commands, actual SIGKILL/restart, unknown and zero blind replay",
+                    flush=True,
+                )
                 print(
                     "PASS scene lifecycle: PostgreSQL CAS, TLS SET/ACK/state, atomic receipt links, real Core process restart, ON/OFF and zero physical devices",
                     flush=True,
