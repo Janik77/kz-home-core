@@ -123,7 +123,7 @@ def verify_upgrade(connection, from_previous):
     command.upgrade(config, "head")
     assert (
         connection.scalar(text("SELECT version_num FROM alembic_version"))
-        == FAVORITES_HEAD
+        == SERVER_SCENE_HEAD
     )
     assert_column(connection, 128)
     assert EventLogORM.__table__.c.correlation_id.type.length == 128
