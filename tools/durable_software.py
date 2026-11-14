@@ -19,8 +19,8 @@ import traceback
 from uuid import uuid4
 
 CORE = Path(__file__).resolve().parents[1]
-CORE_SHA = "27b20c7eccb5b7678c10ce7a7c7c2c865a04d3cd"
-WEB_SHA = "c2c4fa89a0da3652e8e0cca3629300ecfd7e658f"
+CORE_SHA = "5b87f4b71a7a2a99d4dd3d288c7f1ec76ab781f2"
+WEB_SHA = "1dec0a82577bf306fefa6f40010b2ff60f541648"
 PG = "postgres:17-bookworm@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6ef6225b3e5d59c7afb35e994"
 MQTT = "eclipse-mosquitto:2@sha256:75d6662dee52c947dc9dd9c29f1d8d7ffef78ddaf38001caa09755681e8bbc98"
 OPENSSL = "alpine/openssl:latest@sha256:6821afa2476e11be343f29275f2ca24291720ff0a7148bd131fd8e314ff26d9e"
@@ -498,7 +498,74 @@ def initialize(directory):
     return profile
 
 
+SOURCE_TOOL_SHA = "82653a849d2b61479de1c3bb4d74e7f388523667"
+SOURCE_RUNTIME_SHA = "f946a07f67f9ccb1e8f62c99860a0842bf3a062b"
+SOURCE_WEB_SHA = "c2c4fa89a0da3652e8e0cca3629300ecfd7e658f"
+SOURCE_MIGRATION = "0010_scene_runs"
+
+
+def legacy_fingerprints(profile):
+    tables = profile.query(
+        "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename NOT IN ('alembic_version','device_favorites') ORDER BY tablename"
+    ).splitlines()
+    result = {}
+    for table in tables:
+        if not re.fullmatch(r"[a-z][a-z0-9_]*", table):
+            raise ValueError("Unexpected source table")
+        result[table] = profile.query(
+            f"""SELECT count(*) || ':' || md5(COALESCE(string_agg(row_to_json(t)::text, E'\\n' ORDER BY row_to_json(t)::text),'')) FROM public."{table}" t"""
+        )
+    return result
+
+
+def validate_source_checkout(path):
+    path = Path(path).resolve()
+    head = subprocess.check_output(
+        ["git", "-C", str(path), "rev-parse", "HEAD"], text=True
+    ).strip()
+    dirty = subprocess.check_output(
+        ["git", "-C", str(path), "status", "--porcelain"], text=True
+    ).strip()
+    if head != SOURCE_TOOL_SHA or dirty:
+        raise ValueError("Use the exact clean Core #42 source checkout")
+    return path
+
+
+def migrate_upgrade(profile):
+    sys.path.insert(0, str(CORE))
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import create_engine
+
+    before = legacy_fingerprints(profile)
+    if profile.query("SELECT count(*) FROM physical_devices") != "0":
+        raise ValueError("Physical inventory refused")
+    engine = create_engine(profile._open_pg())
+    try:
+        cfg = Config(str(CORE / "alembic.ini"))
+        cfg.set_main_option("script_location", str(CORE / "alembic"))
+        with engine.begin() as connection:
+            cfg.attributes["connection"] = connection
+            command.upgrade(cfg, EXPECTED_MIGRATION)
+    finally:
+        engine.dispose()
+    if legacy_fingerprints(profile) != before:
+        raise ValueError("Upgrade changed existing data")
+    if profile.query("SELECT count(*) FROM device_favorites") != "0":
+        raise ValueError("Unexpected migrated favorites")
+
+
+def upgrade(source, destination, source_checkout):
+    validate_core()
+    validate_source_checkout(source_checkout)
+    return _restore(source, destination, upgrading=True)
+
+
 def restore(source, destination):
+    return _restore(source, destination, upgrading=False)
+
+
+def _restore(source, destination, *, upgrading):
     source = Path(source).expanduser().absolute()
     if any(p.is_symlink() for p in (source, *source.parents, source / "manifest.json")):
         raise ValueError("Symlink backup refused")
@@ -515,8 +582,18 @@ def restore(source, destination):
         if hashlib.sha256(contents[name]).hexdigest() != manifest["sha256"][name]:
             raise ValueError("Backup checksum mismatch")
     saved = json.loads(contents["profile.json"])
-    if saved["core_sha"] != CORE_SHA or saved["web_sha"] != WEB_SHA:
+    expected_core = SOURCE_RUNTIME_SHA if upgrading else CORE_SHA
+    expected_web = SOURCE_WEB_SHA if upgrading else WEB_SHA
+    if saved.get("core_sha") != expected_core or saved.get("web_sha") != expected_web:
         raise ValueError("Backup requires another reviewed version")
+    if (
+        not re.fullmatch(r"[a-f0-9]{32}", saved.get("owner", ""))
+        or not re.fullmatch(r"[0-9]+:[0-9]+", saved.get("directory_identity", ""))
+        or not re.fullmatch(r"[0-9]+", saved.get("database_identity", ""))
+        or not Path(saved.get("profile_path", "")).is_absolute()
+    ):
+        raise ValueError("Backup lacks required source identity")
+    saved["core_sha"], saved["web_sha"] = CORE_SHA, WEB_SHA
     docker = Docker()
     target = new_directory(destination)  # Never restore into any existing profile.
     saved["owner"] = uuid4().hex  # Never adopt the source's containers/network/volume.
@@ -559,6 +636,13 @@ def restore(source, destination):
             "--no-acl",
             data=contents["database.dump"],
         )
+        if upgrading:
+            if (
+                profile.query("SELECT version_num FROM alembic_version")
+                != SOURCE_MIGRATION
+            ):
+                raise ValueError("Unsupported source migration")
+            migrate_upgrade(profile)
         profile.verify_database()
         private_write(
             target / "initialized", "1"
@@ -777,12 +861,14 @@ async def provision_once(profile, api, ids, seed):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "action", choices=("init", "start", "stop", "backup", "restore", "status")
+        "action",
+        choices=("init", "start", "stop", "backup", "restore", "upgrade", "status"),
     )
     parser.add_argument("--state", required=True, type=Path)
     parser.add_argument("--web-root", type=Path)
     parser.add_argument("--destination", type=Path)
     parser.add_argument("--backup", type=Path)
+    parser.add_argument("--source-checkout", type=Path)
     args = parser.parse_args()
     if os.name != "posix" or os.getuid() == 0:
         parser.error(
@@ -793,6 +879,14 @@ def main():
             initialize(args.state)
             print(
                 "Created private software profile. Login is owner@example.test; password is in profile.json."
+            )
+            return
+        if args.action == "upgrade":
+            if args.backup is None or args.source_checkout is None:
+                parser.error("--backup and --source-checkout required")
+            upgrade(args.backup, args.state, args.source_checkout)
+            print(
+                "Upgraded into NEW stopped profile; source profile and backup untouched."
             )
             return
         if args.action == "restore":

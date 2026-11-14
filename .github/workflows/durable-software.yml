@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: Janik77/kz-home-web
-          ref: c2c4fa89a0da3652e8e0cca3629300ecfd7e658f
+          ref: 1dec0a82577bf306fefa6f40010b2ff60f541648
           path: web
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1

@@ -45,12 +45,12 @@ def inventory(docker):
     }
 
 
-def launch(profile, web):
+def launch(profile, web, core=CORE):
     process = subprocess.Popen(
         [
             sys.executable,
             "-B",
-            str(CORE / "tools/durable_software.py"),
+            str(core / "tools/durable_software.py"),
             "start",
             "--state",
             str(profile.path),
