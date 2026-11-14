@@ -268,7 +268,15 @@ def main():
             web,
             success=False,
         )
-        profiles.append(manager.Profile(root / "migration-failed", docker))
+        failed_profile = manager.Profile(root / "migration-failed", docker)
+        profiles.append(failed_profile)
+        failed_profile._open_pg()
+        assert (
+            failed_profile.query("SELECT version_num FROM alembic_version")
+            == "0011_device_favorites"
+        )
+        assert manager.legacy_fingerprints(failed_profile) == original_rows
+        failed_profile.stop()
 
         attempt(backup, root / "upgraded", success=True)
         upgraded = manager.Profile(root / "upgraded", docker)
