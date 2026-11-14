@@ -92,7 +92,9 @@ runs, claims, receipts and auth records must be unchanged. Favorites starts empt
 The upgraded target gets its own database identity and Web port; inherited lab login
 credentials remain valid. Browser localStorage/theme preferences are not DB backup data.
 
-Initialization markers are written only after migration/data checks succeed. On failure,
+The final initialized marker is published by atomic rename only after migration/data
+checks, the seeded marker write and shutdown all succeed. Failed marker writes leave
+the target unstartable (including a partially written pending completion file). On failure,
 only the new target is stopped and left for inspection; it cannot be started, reused
 as an existing target or automatically reset. Source profile and backup are not deleted
 or rewritten. Never turn a partial target into an initialized one manually.

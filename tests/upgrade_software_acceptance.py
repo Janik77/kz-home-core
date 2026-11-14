@@ -73,6 +73,64 @@ def variant(backup, target, *, pins=False, identity=False, corrupt=False, dump=N
     return target
 
 
+def marker_failure_cases(backup, root, web, docker, profiles, *, old_core=None):
+    """Actual restore/upgrade cannot start after either marker write fails."""
+    original_write = manager.private_write
+    prefix = "upgrade" if old_core is not None else "restore"
+    for marker, after_write in (
+        ("seeded", False),
+        ("seeded", True),
+        (".initialized.pending", False),
+        (".initialized.pending", True),
+    ):
+        target = root / f"{prefix}-marker-{marker.strip('.')}-{after_write}"
+        reached = False
+
+        def failing_write(path, data):
+            nonlocal reached
+            if path == target / marker:
+                reached = True
+                if after_write:
+                    original_write(path, data)
+                raise OSError("Injected test-only marker write failure")
+            return original_write(path, data)
+
+        manager.private_write = failing_write
+        try:
+            try:
+                if old_core is None:
+                    manager.restore(backup, target)
+                else:
+                    manager.upgrade(backup, target, old_core)
+            except OSError:
+                assert reached, "Failure occurred before intended marker boundary"
+            else:
+                raise AssertionError("Marker failure did not stop restore")
+        finally:
+            manager.private_write = original_write
+            if (target / "profile.json").is_file():
+                profiles.append(manager.Profile(target, docker))
+        assert not (target / "initialized").exists()
+        cli(manager.CORE, "start", "--state", target, "--web-root", web, success=False)
+        profile = profiles[-1]
+        assert not any(
+            item and item["State"]["Running"]
+            for item in (
+                profile.owned("container", profile.name + "-pg"),
+                profile.owned("container", profile.name + "-mqtt"),
+            )
+        )
+        profile._open_pg()
+        assert (
+            profile.query("SELECT version_num FROM alembic_version")
+            == "0011_device_favorites"
+        )
+        profile.stop()
+    print(
+        f"PASS {prefix} marker faults: before/after seeded and pending completion write; no initialized, start refused, services stopped"
+    )
+
+
 def main():
     assert os.environ.get("GITHUB_ACTIONS") == "true"
     web, old_core, old_web = map(lambda p: Path(p).resolve(), sys.argv[1:])
@@ -278,6 +336,8 @@ def main():
         assert manager.legacy_fingerprints(failed_profile) == original_rows
         failed_profile.stop()
 
+        marker_failure_cases(backup, root, web, docker, profiles, old_core=old_core)
+
         attempt(backup, root / "upgraded", success=True)
         upgraded = manager.Profile(root / "upgraded", docker)
         profiles.append(upgraded)
@@ -351,6 +411,7 @@ def main():
         process = None
         with upgraded.lock():
             new_backup = upgraded.backup(root / "new-backup")
+        marker_failure_cases(new_backup, root, web, docker, profiles)
         restored = manager.restore(new_backup, root / "restored")
         profiles.append(restored)
         process, url = launch(restored, web)

@@ -644,12 +644,13 @@ def _restore(source, destination, *, upgrading):
                 raise ValueError("Unsupported source migration")
             migrate_upgrade(profile)
         profile.verify_database()
-        private_write(
-            target / "initialized", "1"
-        )  # Incomplete restore cannot be started.
         private_write(target / "seeded", "1")
     finally:
         profile.stop()
+    # Publish permission to start only after seeded and shutdown both succeeded.
+    # A failed/partial write leaves only an inert pending file, never initialized.
+    private_write(target / ".initialized.pending", "1")
+    os.replace(target / ".initialized.pending", target / "initialized")
     return profile
 
 
