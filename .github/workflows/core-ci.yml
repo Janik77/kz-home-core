@@ -1,0 +1,117 @@
+name: Core CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline:
+    name: Lint and offline tests (SQLite / software emulation)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m ruff check .
+      # Live Docker/MQTT and PostgreSQL tests keep their existing opt-in skips.
+      - run: python -m pytest -q -ra
+
+  postgresql:
+    name: PostgreSQL migrations and concurrency
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_USER: core_ci
+          POSTGRES_PASSWORD: ci-only-disposable
+          POSTGRES_DB: core_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U core_ci -d core_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      APP_ENV: test
+      MQTT_ENABLED: 'false'
+      KZHOME_SIMULATOR_ENABLED: 'false'
+      DATABASE_URL: postgresql+psycopg://core_ci:ci-only-disposable@127.0.0.1:5432/core_ci
+      TEST_POSTGRESQL_URL: postgresql+psycopg://core_ci:ci-only-disposable@127.0.0.1:5432/core_ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: python -m pip install -r requirements-dev.txt
+      - name: Empty database migration round trip
+        run: |
+          python -m alembic upgrade head
+          python -m alembic downgrade base
+          python -m alembic upgrade head
+      - name: Existing migration, row-lock and CAS tests
+        run: >-
+          python -m pytest -q -ra
+          tests/test_schema.py
+          tests/test_onboarding_postgresql.py
+          tests/test_provisioning_postgresql.py
+          tests/test_definition_postgresql.py
+          tests/test_scene_runs_postgresql.py
+          tests/test_definition_migration.py
+          tests/test_device_favorites_postgresql.py
+          tests/test_device_favorites_schema.py
+
+  mqtt-suback:
+    name: Real Mosquitto SUBACK and TLS (loopback only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements-dev.txt
+      - name: Build pinned Mosquitto without installing a system service
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_root="$RUNNER_TEMP/suback-mosquitto"
+          mkdir -p "$source_root"
+          curl --fail --location --silent --show-error \
+            https://codeload.github.com/eclipse-mosquitto/mosquitto/tar.gz/766fa2c5a9bed6c65249cf555f430b982c417480 \
+            -o "$source_root/source.tar.gz"
+          echo "c68089994b371eb55eb111869d9b530d86df4612730338f68714ce73980ff6be  $source_root/source.tar.gz" | sha256sum --check
+          tar -xzf "$source_root/source.tar.gz" -C "$source_root"
+          broker_source="$source_root/mosquitto-766fa2c5a9bed6c65249cf555f430b982c417480"
+          cmake -S "$broker_source" -B "$source_root/build" \
+            -DWITH_TLS=ON -DWITH_CJSON=OFF -DDOCUMENTATION=OFF \
+            -DWITH_APPS=OFF -DWITH_CLIENTS=OFF -DWITH_PLUGINS=OFF
+          cmake --build "$source_root/build" --target mosquitto -j2
+          echo "SUBACK_MOSQUITTO_SOURCE=$broker_source" >> "$GITHUB_ENV"
+          echo "SUBACK_MOSQUITTO_BINARY=$source_root/build/src/mosquitto" >> "$GITHUB_ENV"
+      - name: Real broker grants, refusals, TLS and gateway readiness
+        run: python -m pytest tests/test_mqtt_suback_broker.py -v -ra

@@ -39,7 +39,7 @@ def test_migration_roundtrip_and_preservation(tmp_path, fresh):
             command.upgrade(config, "head")
             assert (
                 connection.scalar(text("SELECT version_num FROM alembic_version"))
-                == "0008_provisioning_sessions"
+                == "0012_server_scene_execution"
             )
             differences = compare_metadata(
                 MigrationContext.configure(
@@ -90,7 +90,7 @@ def test_sqlite_committed_empty_downgrade_uses_write_transaction(tmp_path):
     try:
         with engine.begin() as connection:
             config.attributes["connection"] = connection
-            command.upgrade(config, "head")
+            command.upgrade(config, "0008_provisioning_sessions")
 
         def observe(connection, cursor, statement, parameters, context, many):
             statements.append(statement)

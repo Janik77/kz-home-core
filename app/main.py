@@ -12,6 +12,7 @@ from app.core import Settings
 from app.core.logging import configure_logging
 from app.core.errors import (
     ConflictError,
+    DefinitionRevisionConflict,
     EntityNotFoundError,
     InvalidReferenceError,
     UnavailableError,
@@ -156,6 +157,8 @@ def create_app(
         )
 
     command_transport: Transport | None = gateway
+    from app.services.scene_executor import SceneExecutor
+    scene_executor = SceneExecutor(session_factory, command_transport)
 
     async def process_automations(event: Event) -> None:
         with session_factory() as session:
@@ -233,6 +236,7 @@ def create_app(
             yield
         finally:
             app.state.initialized = False
+            await scene_executor.stop()
             if gateway is not None:
                 await gateway.stop()
             if task is not None:
@@ -253,7 +257,7 @@ def create_app(
     application.state.mqtt_gateway = gateway
     application.state.control_authority = control_authority
     application.include_router(
-        build_router(get_session, event_bus, command_transport, settings)
+        build_router(get_session, event_bus, command_transport, settings, scene_executor)
     )
 
     @application.get("/ready")
@@ -274,6 +278,12 @@ def create_app(
         return JSONResponse(
             status_code=404, content={"detail": str(error) or "Entity not found"}
         )
+
+    @application.exception_handler(DefinitionRevisionConflict)
+    async def definition_conflict_handler(_, error: DefinitionRevisionConflict) -> JSONResponse:
+        return JSONResponse(status_code=409, content={
+            "detail": str(error), "code": "definition_revision_conflict"
+        })
 
     @application.exception_handler(ConflictError)
     async def conflict_handler(_, error: ConflictError) -> JSONResponse:

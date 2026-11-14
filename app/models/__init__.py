@@ -10,6 +10,7 @@ from app.models.entities import (
     HouseMembershipORM,
     RefreshSessionORM,
 )
+from app.models.device_favorite import DeviceFavoriteORM
 from app.models.physical_device import PhysicalDeviceORM
 from app.models.device_command import DeviceCommandORM
 from app.models.control_command import ControlCommandORM
@@ -31,3 +32,8 @@ __all__ = [
     "HouseMembershipORM",
     "RefreshSessionORM",
 ]
+
+from app.models.scene_run import SceneRunORM, SceneRunActionORM, SceneRunReceiptORM
+__all__ += ["SceneRunORM", "SceneRunActionORM", "SceneRunReceiptORM"]
+
+__all__ += ["DeviceFavoriteORM"]

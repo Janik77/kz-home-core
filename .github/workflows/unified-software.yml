@@ -1,0 +1,90 @@
+name: Unified software stack
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: unified-software-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  web-core-relay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      BASELINE_WEB_SOURCE: ${{ github.workspace }}/web-before
+      LIVE_CORE_SOURCE: ${{ github.workspace }}/core
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: core
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Janik77/kz-home-web
+          ref: c55dba53cb093c55d006dcd76f54b823a6f6e2be
+          path: web
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Janik77/kz-home-web
+          ref: 1a3226527e6b9501735b29e251a2982c7f5577f4
+          path: web-before
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12'
+      - name: Install pinned checkout dependencies without system installation
+        working-directory: web
+        run: |
+          python -m venv "$RUNNER_TEMP/unified-venv"
+          "$RUNNER_TEMP/unified-venv/bin/python" -m pip install -r ../core/requirements-dev.txt
+          "$RUNNER_TEMP/unified-venv/bin/python" -m pip check
+          npm ci
+          npm --prefix ../web-before ci
+          npx playwright install chromium
+      - name: Web typecheck, lint, unit tests and build
+        working-directory: web
+        run: |
+          npm run typecheck
+          npm run lint
+          npm test
+          npm run build
+          npm run test:e2e
+          npm run test:e2e:core
+          python -m unittest discover -s e2e -p test_confirmed_live_evidence.py -v
+      - name: Pull fixed disposable images before inventory baseline
+        run: |
+          docker pull postgres:17-bookworm@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6ef6225b3e5d59c7afb35e994
+          docker pull eclipse-mosquitto:2@sha256:75d6662dee52c947dc9dd9c29f1d8d7ffef78ddaf38001caa09755681e8bbc98
+          docker pull alpine/openssl:latest@sha256:6821afa2476e11be343f29275f2ca24291720ff0a7148bd131fd8e314ff26d9e
+      - name: Durable scenes with real PostgreSQL, TLS and Core process restart
+        working-directory: core
+        run: '"$RUNNER_TEMP/unified-venv/bin/python" -B tools/scene_run_live.py --web-root ../web'
+      - name: Smoke-test the documented isolated launcher
+        working-directory: core
+        run: '"$RUNNER_TEMP/unified-venv/bin/python" -B tools/run_software_stack.py --web-root ../web --smoke-test'
+      - name: Real browser, Core, MQTT TLS, software relay and PostgreSQL receipts
+        working-directory: web
+        run: '"$RUNNER_TEMP/unified-venv/bin/python" -B e2e/confirmed-live-runner.py'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: unified-software-evidence
+          path: |
+            web/test-results/confirmed-live-evidence.json
+            web/test-results/scene-live-evidence.json
+            web/test-results/confirmed-live/**/*.webm
+            web/test-results/scene-live-current/**/*.webm
+            web/test-results/scene-live-before/**/*.webm
+            web/test-results/scene-visual-*.json
+            web/test-results/live-space-*.png
+            web/test-results/live-space-*.webm
+            web/test-results/live-favorites-*
+            web/test-results/confirmed-live-preservation.json
+            web/test-results/live-software-*.png
+          if-no-files-found: warn

@@ -137,6 +137,7 @@ class DeviceORM(TimestampMixin, Base):
 class SceneORM(TimestampMixin, Base):
     __tablename__ = "scenes"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     name: Mapped[str] = mapped_column(String(255))
     house_id: Mapped[str] = mapped_column(
         ForeignKey("houses.id", ondelete="CASCADE"), index=True
@@ -149,6 +150,7 @@ class AutomationORM(TimestampMixin, Base):
     __tablename__ = "automations"
     __table_args__ = (Index("ix_automations_house_enabled", "house_id", "enabled"),)
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     name: Mapped[str] = mapped_column(String(255))
     house_id: Mapped[str] = mapped_column(
         ForeignKey("houses.id", ondelete="CASCADE"), index=True

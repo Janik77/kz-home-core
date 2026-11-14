@@ -1,0 +1,48 @@
+name: Durable software profile
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: durable-software-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  restart-backup-restore:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: core
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Janik77/kz-home-web
+          ref: c55dba53cb093c55d006dcd76f54b823a6f6e2be
+          path: web
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12'
+      - name: Install checkout dependencies without system installation
+        working-directory: web
+        run: |
+          python -m venv "$RUNNER_TEMP/durable-venv"
+          "$RUNNER_TEMP/durable-venv/bin/python" -m pip install -r ../core/requirements-dev.txt
+          "$RUNNER_TEMP/durable-venv/bin/python" -m pip check
+          npm ci
+      - name: Pull fixed images before preservation baseline
+        run: |
+          docker pull postgres:17-bookworm@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6ef6225b3e5d59c7afb35e994
+          docker pull eclipse-mosquitto:2@sha256:75d6662dee52c947dc9dd9c29f1d8d7ffef78ddaf38001caa09755681e8bbc98
+          docker pull alpine/openssl:latest@sha256:6821afa2476e11be343f29275f2ca24291720ff0a7148bd131fd8e314ff26d9e
+      - name: Verify private persistence and isolated restore over real HTTP and MQTT TLS
+        working-directory: core
+        run: '"$RUNNER_TEMP/durable-venv/bin/python" -B tests/durable_software_acceptance.py ../web'

@@ -182,3 +182,56 @@ def test_duplicate_email_membership_permissions_and_house_isolation(tmp_path) ->
 def test_production_requires_strong_secret() -> None:
     with pytest.raises(ValueError, match="AUTH_JWT_SECRET"):
         Settings(database_url="sqlite://", app_env="production")
+
+
+@pytest.mark.parametrize("clock_offset,expected", [(0, 200), (-2, 401), (900, 401)])
+def test_parallel_access_keeps_jwt_time_checks(
+    tmp_path, monkeypatch, clock_offset, expected
+):
+    """Controlled clock rollback reproduces 200 GET then 401/401; not historical proof."""
+    from concurrent.futures import ThreadPoolExecutor
+    import jwt.api_jwt
+    import app.security
+
+    instant = datetime(2026, 1, 1, tzinfo=UTC)
+
+    class VerifierClock(datetime):
+        offset = 0
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.fromtimestamp(instant.timestamp() + cls.offset, tz=UTC)
+
+    monkeypatch.setattr(app.security, "datetime", VerifierClock)
+    monkeypatch.setattr(jwt.api_jwt, "datetime", VerifierClock)
+    settings, engine, _ = _auth_client(tmp_path)
+    try:
+        with TestClient(create_app(settings, run_simulator=False)) as client:
+            login = client.post(
+                "/auth/login",
+                json={
+                    "email": "user@example.com",
+                    "password": "correct horse battery staple",
+                },
+            )
+            assert login.status_code == 200
+            headers = {"Authorization": "Bearer " + login.json()["access_token"]}
+            assert client.get("/auth/me", headers=headers).status_code == 200
+            VerifierClock.offset = clock_offset
+            with ThreadPoolExecutor(max_workers=2) as workers:
+                results = list(
+                    workers.map(
+                        lambda _: client.get("/auth/me", headers=headers), range(2)
+                    )
+                )
+            assert [response.status_code for response in results] == [
+                expected,
+                expected,
+            ]
+            if expected == 401:
+                assert all(
+                    response.json() == {"detail": "Invalid access token"}
+                    for response in results
+                )
+    finally:
+        engine.dispose()

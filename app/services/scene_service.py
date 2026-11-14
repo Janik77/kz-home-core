@@ -1,4 +1,4 @@
-from app.core.errors import InvalidReferenceError
+from app.core.errors import DefinitionRevisionConflict, InvalidReferenceError
 from app.events import Event, EventBus
 from app.repositories.house_repository import HouseRepository
 from app.repositories.scene_repository import SceneRepository
@@ -31,14 +31,30 @@ class SceneService:
         self._validate(data)
         return SceneRead.model_validate(self.repository.create(data.model_dump()))
 
-    def update(self, scene_id: str, data: SceneUpdate) -> SceneRead:
-        values = data.model_dump(exclude_unset=True, exclude_none=True)
+    def update(
+        self, scene_id: str, data: SceneUpdate, *, expected_house_id: str | None = None
+    ) -> SceneRead:
+        values = data.model_dump(
+            exclude_unset=True, exclude_none=True, exclude={"expected_revision"}
+        )
         current = self.get(scene_id)
+        if (
+            data.expected_revision is not None
+            and data.expected_revision != current.revision
+        ):
+            raise DefinitionRevisionConflict()
         candidate = SceneCreate.model_validate(
             {**current.model_dump(exclude={"created_at", "updated_at"}), **values}
         )
         self._validate(candidate)
-        return SceneRead.model_validate(self.repository.update(scene_id, values))
+        return SceneRead.model_validate(
+            self.repository.update(
+                scene_id,
+                values,
+                expected_revision=current.revision,
+                expected_house_id=expected_house_id,
+            )
+        )
 
     def delete(self, scene_id: str) -> None:
         self.repository.delete(scene_id)
@@ -46,6 +62,11 @@ class SceneService:
     async def run(self, scene_id: str) -> SceneRead:
         scene = self.get(scene_id)
         self._validate(scene)
+        # Reject already-invalid later actions before any earlier action changes
+        # state. This is not a transaction or a promise of eventual completion;
+        # update_state still enforces its guards at each actual dispatch.
+        for action in scene.actions:
+            self.devices.validate_state_update(action.device_id, action.state)
         for action in scene.actions:
             await self.devices.update_state(action.device_id, action.state)
         await self.event_bus.publish(
