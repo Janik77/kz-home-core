@@ -167,7 +167,12 @@ def dispatch_scene_action(http, run_id, position, on):
 
 
 def snapshot(http):
-    paths = ("/houses/fixture_house", "/rooms/saved_room", "/scenes/saved_scene")
+    paths = (
+        "/houses/fixture_house",
+        "/rooms/saved_room",
+        "/scenes/saved_scene",
+        "/v1/houses/fixture_house/me/device-favorites",
+    )
     values = {}
     for path in paths:
         response = http.get("/core-api" + path)
@@ -248,6 +253,17 @@ def main():
                 json={"expected_revision": revision, "name": "Saved revision"},
             )
             assert response.status_code == 200
+            favorite_path = "/core-api/v1/houses/fixture_house/me/device-favorites"
+            before_commands = http.get("/core-api/devices/fixture_relay").json()[
+                "state"
+            ]
+            assert http.put(favorite_path + "/fixture_relay").status_code == 204
+            assert http.put(favorite_path + "/fixture_relay").status_code == 204
+            assert http.get(favorite_path).json() == {"device_ids": ["fixture_relay"]}
+            assert (
+                http.get("/core-api/devices/fixture_relay").json()["state"]
+                == before_commands
+            )
             expected = snapshot(http)
             command(http, True)
             command(http, False)
@@ -390,6 +406,9 @@ def main():
         with httpx.Client(base_url=url, trust_env=False, timeout=5) as http:
             login(http, restored)
             assert snapshot(http) == expected
+            favorite_path = "/core-api/v1/houses/fixture_house/me/device-favorites"
+            assert http.delete(favorite_path + "/fixture_relay").status_code == 204
+            assert http.get(favorite_path).json() == {"device_ids": []}
             assert read_run(http, run_id) == completed_run
             command(http, False)
             response = http.patch(

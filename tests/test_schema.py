@@ -28,6 +28,7 @@ CONTROL_HEAD = "0007_control_authority"
 PROVISIONING_HEAD = "0008_provisioning_sessions"
 DEFINITION_HEAD = "0009_definition_revisions"
 SCENE_RUN_HEAD = "0010_scene_runs"
+FAVORITES_HEAD = "0011_device_favorites"
 PREVIOUS = "0003_auth_foundation"
 
 
@@ -41,9 +42,10 @@ def migration_config(connection=None):
 
 def test_migration_chain_has_one_head():
     scripts = ScriptDirectory.from_config(migration_config())
-    assert scripts.get_heads() == [SCENE_RUN_HEAD]
+    assert scripts.get_heads() == [FAVORITES_HEAD]
     revisions = list(scripts.walk_revisions())
     assert [revision.revision for revision in revisions] == [
+        FAVORITES_HEAD,
         SCENE_RUN_HEAD,
         DEFINITION_HEAD,
         PROVISIONING_HEAD,
@@ -56,6 +58,7 @@ def test_migration_chain_has_one_head():
         "0001_initial",
     ]
     assert [revision.down_revision for revision in revisions] == [
+        SCENE_RUN_HEAD,
         DEFINITION_HEAD,
         PROVISIONING_HEAD,
         CONTROL_HEAD,
@@ -117,7 +120,7 @@ def verify_upgrade(connection, from_previous):
     command.upgrade(config, "head")
     assert (
         connection.scalar(text("SELECT version_num FROM alembic_version"))
-        == SCENE_RUN_HEAD
+        == FAVORITES_HEAD
     )
     assert_column(connection, 128)
     assert EventLogORM.__table__.c.correlation_id.type.length == 128

@@ -80,6 +80,8 @@ jobs:
           tests/test_definition_postgresql.py
           tests/test_scene_runs_postgresql.py
           tests/test_definition_migration.py
+          tests/test_device_favorites_postgresql.py
+          tests/test_device_favorites_schema.py
 
   mqtt-suback:
     name: Real Mosquitto SUBACK and TLS (loopback only)

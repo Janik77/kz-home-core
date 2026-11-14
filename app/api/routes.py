@@ -53,6 +53,7 @@ from app.api.dependencies import build_current_user_dependency
 from app.api.onboarding import build_onboarding_router
 from app.api.provisioning import build_provisioning_router
 from app.api.scene_runs import build_scene_run_router
+from app.api.device_favorites import build_device_favorites_router
 from app.api.commands import build_command_router
 from app.repositories.physical_device_repository import PhysicalDeviceRepository
 from app.services.onboarding_service import PhysicalBindingGuard
@@ -129,6 +130,7 @@ def build_router(
         return authorization(session).accessible_house_ids(user.id, permission)
 
     get_current_user = build_current_user_dependency(get_session, codec)
+    router.include_router(build_device_favorites_router(get_session, get_current_user, require))
     router.include_router(
         build_provisioning_router(get_session, get_current_user, require)
     )
