@@ -2,8 +2,8 @@
 
 The supported new combination is Core #43
 `5b87f4b71a7a2a99d4dd3d288c7f1ec76ab781f2`, migration
-`0011_device_favorites`, and unmodified Web #23
-`1dec0a82577bf306fefa6f40010b2ff60f541648`.
+`0011_device_favorites`, and unmodified Web #24
+`0ce542d9ffdb097564e117332f3a07abaf4dc1c4`.
 The source Core tooling's intermediate pin 27b20c7 is replaced with the actual final
 reviewed Core source; runtime files are unchanged. Web review is still pending.
 

@@ -1,9 +1,9 @@
 # Isolated software upgrade and rollback
 
 This integration uses Core #43 `5b87f4b71a7a2a99d4dd3d288c7f1ec76ab781f2`,
-migration `0011_device_favorites`, and unmodified Web #23
-`1dec0a82577bf306fefa6f40010b2ff60f541648`. Core independent review is complete;
-Web review is pending. This draft's exact tested integration SHA/CI links are in its PR.
+migration `0011_device_favorites`, and unmodified Web #24
+`0ce542d9ffdb097564e117332f3a07abaf4dc1c4`. Core independent review is complete;
+Web #24 independent visual review is pending. This draft's exact tested integration SHA/CI links are in its PR.
 
 Only ONE upgrade input is supported:
 - backup made with the exact clean Core #42 tool checkout
@@ -12,6 +12,11 @@ Only ONE upgrade input is supported:
 - Web #20 `c2c4fa89a0da3652e8e0cca3629300ecfd7e658f`;
 - complete owner/path/device/inode/database identity fields and manifest;
 - restored source database at exactly `0010_scene_runs`, no physical inventory.
+
+Profiles created by Core #44 with Web #23 are not accepted by this checkout; keep
+using exact Core #44 `733a1b31cdf4eb8a97e732ebf4ed6bf9cc243518` for those profiles.
+This pin update does not add an upgrade path from #44/Web #23. It preserves the
+single #42/Web #20 source contract above.
 
 Earlier draft profiles without identity, #40/#41 Web pins, intermediate #43 runtime
 pins, other revisions and arbitrary cross-version backups are unsupported. Ordinary
@@ -26,10 +31,10 @@ or use of kzhome-local, mentoring demo or orchestrator VM. Keep profiles on the 
 home filesystem. The user's WSL machine has not been tested.
 
 ```bash
-git clone --branch codex/integrated-favorites-upgrade https://github.com/Janik77/kz-home-core.git core-new
+git clone --branch codex/integrated-web24 https://github.com/Janik77/kz-home-core.git core-new
 git -C core-new rev-parse HEAD
 git clone https://github.com/Janik77/kz-home-web.git web-new
-git -C web-new checkout --detach 1dec0a82577bf306fefa6f40010b2ff60f541648
+git -C web-new checkout --detach 0ce542d9ffdb097564e117332f3a07abaf4dc1c4
 python3.12 -m venv .venv-new
 .venv-new/bin/python -m pip install -r core-new/requirements-dev.txt
 .venv-new/bin/python -m pip check
