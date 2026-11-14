@@ -19,13 +19,13 @@ import traceback
 from uuid import uuid4
 
 CORE = Path(__file__).resolve().parents[1]
-CORE_SHA = "f946a07f67f9ccb1e8f62c99860a0842bf3a062b"
+CORE_SHA = "27b20c7eccb5b7678c10ce7a7c7c2c865a04d3cd"
 WEB_SHA = "c2c4fa89a0da3652e8e0cca3629300ecfd7e658f"
 PG = "postgres:17-bookworm@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6ef6225b3e5d59c7afb35e994"
 MQTT = "eclipse-mosquitto:2@sha256:75d6662dee52c947dc9dd9c29f1d8d7ffef78ddaf38001caa09755681e8bbc98"
 OPENSSL = "alpine/openssl:latest@sha256:6821afa2476e11be343f29275f2ca24291720ff0a7148bd131fd8e314ff26d9e"
 LABEL = "kzhome.durable-software"
-EXPECTED_MIGRATION = "0010_scene_runs"
+EXPECTED_MIGRATION = "0011_device_favorites"
 BROKER_FILES = ("ca.crt", "server.crt", "server.key", "passwd", "acl", "mosquitto.conf")
 FILES = (
     "profile.json",
