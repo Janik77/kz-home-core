@@ -37,5 +37,16 @@ class SceneRunRead(BaseModel):
     scene_revision: int
     created_at: datetime
     dispatch_deadline: datetime
-    status: Literal["ready", "running", "succeeded", "stopped", "unknown", "expired"]
+    status: Literal[
+        "ready",
+        "running",
+        "succeeded",
+        "stopped",
+        "unknown",
+        "expired",
+        "partial",
+        "refused",
+    ]
+    execution_mode: Literal["manual", "server"] = "manual"
+    execution_error: str | None = None
     actions: list[SceneRunActionRead]

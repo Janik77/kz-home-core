@@ -157,6 +157,8 @@ def create_app(
         )
 
     command_transport: Transport | None = gateway
+    from app.services.scene_executor import SceneExecutor
+    scene_executor = SceneExecutor(session_factory, command_transport)
 
     async def process_automations(event: Event) -> None:
         with session_factory() as session:
@@ -234,6 +236,7 @@ def create_app(
             yield
         finally:
             app.state.initialized = False
+            await scene_executor.stop()
             if gateway is not None:
                 await gateway.stop()
             if task is not None:
@@ -254,7 +257,7 @@ def create_app(
     application.state.mqtt_gateway = gateway
     application.state.control_authority = control_authority
     application.include_router(
-        build_router(get_session, event_bus, command_transport, settings)
+        build_router(get_session, event_bus, command_transport, settings, scene_executor)
     )
 
     @application.get("/ready")

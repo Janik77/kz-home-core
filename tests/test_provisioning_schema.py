@@ -39,7 +39,7 @@ def test_migration_roundtrip_and_preservation(tmp_path, fresh):
             command.upgrade(config, "head")
             assert (
                 connection.scalar(text("SELECT version_num FROM alembic_version"))
-                == "0011_device_favorites"
+                == "0012_server_scene_execution"
             )
             differences = compare_metadata(
                 MigrationContext.configure(

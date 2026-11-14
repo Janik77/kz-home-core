@@ -78,6 +78,7 @@ def build_router(
     event_bus: EventBus,
     transport: Transport | None = None,
     settings: Settings | None = None,
+    scene_executor=None,
 ) -> APIRouter:
     router = APIRouter()
     if settings is None:
@@ -141,7 +142,7 @@ def build_router(
         build_command_router(get_session, get_current_user, require, transport)
     )
 
-    router.include_router(build_scene_run_router(get_session, get_current_user, require, transport))
+    router.include_router(build_scene_run_router(get_session, get_current_user, require, transport, scene_executor))
 
     @router.get(
         "/v1/houses/{house_id}/me/permissions", response_model=HousePermissionsRead

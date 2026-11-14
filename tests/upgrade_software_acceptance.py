@@ -123,7 +123,7 @@ def marker_failure_cases(backup, root, web, docker, profiles, *, old_core=None):
         profile._open_pg()
         assert (
             profile.query("SELECT version_num FROM alembic_version")
-            == "0011_device_favorites"
+            == "0012_server_scene_execution"
         )
         profile.stop()
     print(
@@ -331,7 +331,7 @@ def main():
         failed_profile._open_pg()
         assert (
             failed_profile.query("SELECT version_num FROM alembic_version")
-            == "0011_device_favorites"
+            == "0012_server_scene_execution"
         )
         assert manager.legacy_fingerprints(failed_profile) == original_rows
         failed_profile.stop()
@@ -344,7 +344,7 @@ def main():
         upgraded.pg()
         assert (
             upgraded.query("SELECT version_num FROM alembic_version")
-            == "0011_device_favorites"
+            == "0012_server_scene_execution"
         )
         assert manager.legacy_fingerprints(upgraded) == original_rows
         assert (

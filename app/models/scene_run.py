@@ -33,6 +33,17 @@ class SceneRunORM(Base):
     scene_revision: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     dispatch_deadline: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    execution_mode: Mapped[str] = mapped_column(
+        String(16), default="manual", server_default="manual"
+    )
+    executor_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    execution_error: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    execution_finished: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0"
+    )
 
 
 class SceneRunActionORM(Base):
