@@ -89,14 +89,14 @@ persisted run; permissions and device guards are checked again at every dispatch
 
 Downgrade refuses nonempty scene-run history so evidence cannot silently be discarded.
 Existing endpoints/schema fields and MQTT envelopes are preserved; database migration
-is required before using this branch. The pinned Web #24 exposes this lifecycle in the integrated software branch.
+is required before using this branch. The pinned Web #25 exposes this lifecycle in the integrated software branch.
 Automation remains on its legacy unconfirmed path and is not implicitly migrated.
 
 ## Verification and dependencies
 
 Stacked on Core #37 `a2bc83aa2451590f71ac34f9aad1c7c328bccb19`, inheriting #36/#32/#33/#35
 and #34 broker coverage. Web fixture is pinned to
-`0ce542d9ffdb097564e117332f3a07abaf4dc1c4` (Web #24 including #17) in this integration.
+`d6533042b950ded2f8b90dbec1af5a05fd078ce0` (Web #25 including #17) in this integration.
 Persistent profile tooling comes from Core #38; integrated runtime is exactly
 Core #43 `5b87f4b71a7a2a99d4dd3d288c7f1ec76ab781f2`.
 Firmware protocol and gates are unchanged; Firmware #12 still pins older Core #36 and
@@ -175,4 +175,4 @@ hardware timing and physical OFF are not certified by these software tests.
 
 Exact setup, persistent profiles, and the explicitly supported #42 backup upgrade/rollback
 are in [SOFTWARE_UPGRADE.md](SOFTWARE_UPGRADE.md). Current schema is 0011_device_favorites;
-the scene lifecycle above is unchanged. Web #24 independent review is pending.
+the scene lifecycle above is unchanged. Web #25 independent review is complete.

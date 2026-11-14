@@ -2,10 +2,10 @@
 
 The supported new combination is Core #43
 `5b87f4b71a7a2a99d4dd3d288c7f1ec76ab781f2`, migration
-`0011_device_favorites`, and unmodified Web #24
-`0ce542d9ffdb097564e117332f3a07abaf4dc1c4`.
+`0011_device_favorites`, and unmodified Web #25
+`d6533042b950ded2f8b90dbec1af5a05fd078ce0`.
 The source Core tooling's intermediate pin 27b20c7 is replaced with the actual final
-reviewed Core source; runtime files are unchanged. Web review is still pending.
+reviewed Core source; runtime files are unchanged. Web #25 independent review is complete.
 
 Use [SOFTWARE_UPGRADE.md](SOFTWARE_UPGRADE.md) as the single setup/run/stop guide.
 It separates a NEW profile from the narrowly supported #42 -> #43 upgrade and
