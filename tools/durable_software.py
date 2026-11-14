@@ -512,8 +512,16 @@ def legacy_fingerprints(profile):
     for table in tables:
         if not re.fullmatch(r"[a-z][a-z0-9_]*", table):
             raise ValueError("Unexpected source table")
+        # 0012 adds execution metadata to scene_runs; compare every original
+        # field byte-for-byte, then validate the new defaults independently.
+        source = (
+            "(SELECT id, house_id, requested_by, idempotency_hash, scene_id, "
+            "scene_revision, created_at, dispatch_deadline FROM public.scene_runs)"
+            if table == "scene_runs"
+            else f'public."{table}"'
+        )
         result[table] = profile.query(
-            f"""SELECT count(*) || ':' || md5(COALESCE(string_agg(row_to_json(t)::text, E'\\n' ORDER BY row_to_json(t)::text),'')) FROM public."{table}" t"""
+            f"""SELECT count(*) || ':' || md5(COALESCE(string_agg(row_to_json(t)::text, E'\\n' ORDER BY row_to_json(t)::text),'')) FROM {source} t"""
         )
     return result
 
@@ -551,6 +559,13 @@ def migrate_upgrade(profile):
         engine.dispose()
     if legacy_fingerprints(profile) != before:
         raise ValueError("Upgrade changed existing data")
+    if (
+        profile.query(
+            "SELECT count(*) FROM scene_runs WHERE execution_mode IS DISTINCT FROM 'manual' OR executor_token IS NOT NULL OR lease_until IS NOT NULL OR execution_error IS NOT NULL OR execution_finished IS DISTINCT FROM false"
+        )
+        != "0"
+    ):
+        raise ValueError("Unexpected migrated server execution metadata")
     if profile.query("SELECT count(*) FROM device_favorites") != "0":
         raise ValueError("Unexpected migrated favorites")
 
