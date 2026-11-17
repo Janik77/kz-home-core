@@ -50,5 +50,10 @@ def require_deadline(session, run_id, now):
         # Recheck at command commit and again immediately before MQTT publish.
         from app.services.scene_run_service import SceneRunService
 
-        SceneRunService(session).require_authority(run.house_id, run.requested_by)
+        if run.source_kind == "automation":
+            from app.services.automation_runs import AutomationRunService
+            service = AutomationRunService(session)
+            service.before_dispatch(run)
+        else:
+            SceneRunService(session).require_authority(run.house_id, run.requested_by)
     return deadline

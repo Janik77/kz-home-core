@@ -107,7 +107,7 @@ def test_downgrade_refuses_to_erase_inventory_or_revocation(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'protected.db'}")
     try:
         with engine.begin() as connection:
-            command.upgrade(config_for(connection), HEAD)
+            command.upgrade(config_for(connection), "head")
         code = token_urlsafe(32)
         with Session(engine) as session:
             service = OnboardingService(PhysicalDeviceRepository(session))
@@ -126,6 +126,9 @@ def test_downgrade_refuses_to_erase_inventory_or_revocation(tmp_path):
                 connection.scalar(text("SELECT version_num FROM alembic_version"))
                 == HEAD
             )
+        # Exercise current ORM services only against the current schema.
+        with engine.begin() as connection:
+            command.upgrade(config_for(connection), "head")
         with Session(engine) as session:
             session.add(HouseORM(id="house", name="House"))
             session.flush()

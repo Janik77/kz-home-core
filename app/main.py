@@ -23,10 +23,8 @@ from app.db import create_db_engine, create_session_factory, session_dependency
 from app.events import Event, EventBus
 from app.models import UserORM
 from app.repositories import (
-    AutomationRepository,
     DeviceRepository,
     EventLogRepository,
-    HouseRepository,
     RoomRepository,
     MembershipRepository,
     RefreshSessionRepository,
@@ -38,7 +36,6 @@ from app.services.auth_service import (
     AuthenticationService,
     AuthorizationService,
 )
-from app.services.automation_service import AutomationService
 from app.services.device_service import DeviceService
 from app.services.event_log_service import EventLogService
 from app.services.readiness_service import ReadinessService
@@ -88,12 +85,13 @@ def create_app(
             device_id: str,
             state: dict,
             correlation_id: str,
+            observed_at=None, retained=True,
         ) -> None:
             with session_factory() as session:
                 await DeviceService(
                     DeviceRepository(session), RoomRepository(session), event_bus
                 ).report_state(
-                    house_id, device_id, state, correlation_id=correlation_id
+                    house_id, device_id, state, correlation_id=correlation_id, observed_at=observed_at, retained=retained
                 )
 
         async def receive_status(
@@ -154,6 +152,7 @@ def create_app(
             control_authority=control_authority,
             control_stage_handler=control_stage,
             control_request_handler=control_request,
+            state_report_handler=receive_state,
         )
 
     command_transport: Transport | None = gateway
@@ -162,19 +161,8 @@ def create_app(
 
     async def process_automations(event: Event) -> None:
         with session_factory() as session:
-            devices = DeviceService(
-                DeviceRepository(session),
-                RoomRepository(session),
-                event_bus,
-                command_transport,
-            )
-            service = AutomationService(
-                AutomationRepository(session),
-                HouseRepository(session),
-                devices,
-                event_bus,
-            )
-            await service.handle_event(event)
+            from app.services.automation_runs import AutomationRunService
+            await AutomationRunService(session, command_transport).handle_event(event, scene_executor)
 
     async def schedule_automations(event: Event) -> None:
         if event.type != "device_state_changed":

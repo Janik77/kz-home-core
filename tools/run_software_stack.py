@@ -13,7 +13,7 @@ import sys
 from uuid import uuid4
 
 CORE = Path(__file__).resolve().parents[1]
-WEB_SHA = "c55dba53cb093c55d006dcd76f54b823a6f6e2be"
+WEB_SHA = "420312fc9e6afde5e65c1f5085f050ae3ccc1550"
 
 
 def validate_web(root):
@@ -76,6 +76,7 @@ async def run(
                 while True:
                     await asyncio.sleep(60)
                     await relay.send(TopicKind.STATUS, relay.status(True))
+                    await relay.state("heartbeat-" + uuid4().hex)
 
             receiver = asyncio.create_task(receive())
             heartbeats = asyncio.create_task(heartbeat())

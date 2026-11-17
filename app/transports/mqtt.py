@@ -67,10 +67,12 @@ class MQTTGateway:
         control_authority=None,
         control_stage_handler=None,
         control_request_handler=None,
+        state_report_handler=None,
     ) -> None:
         self.client = client
         self.event_bus = event_bus
         self.state_handler = state_handler
+        self.state_report_handler = state_report_handler
         self.status_handler = status_handler
         self.identity_handler = identity_handler
         self.sleep = sleep
@@ -287,12 +289,10 @@ class MQTTGateway:
         await self.identity_handler(house_id, device_id)
         if kind is TopicKind.STATE:
             envelope = StateEnvelope.model_validate(raw)
-            await self.state_handler(
-                house_id,
-                device_id,
-                envelope.state,
-                envelope.correlation_id,
-            )
+            if self.state_report_handler is not None:
+                await self.state_report_handler(house_id, device_id, envelope.state, envelope.correlation_id, envelope.timestamp, retained)
+            else:
+                await self.state_handler(house_id, device_id, envelope.state, envelope.correlation_id)
             if self.command_state_handler is not None:
                 await self.command_state_handler(
                     house_id, device_id, envelope, retained

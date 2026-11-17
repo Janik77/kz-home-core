@@ -52,7 +52,12 @@ class SceneExecutor:
                     if ownership.rowcount != 1:
                         reason = "executor_lost"
                         break
-                    service = SceneRunService(session, self.transport)
+                    owner_row = session.get(SceneRunORM, run_id)
+                    if owner_row.source_kind == "automation":
+                        from app.services.automation_runs import AutomationRunService
+                        service = AutomationRunService(session, self.transport)
+                    else:
+                        service = SceneRunService(session, self.transport)
                     run = service.row(house_id, run_id)
                     view = service.get(house_id, run_id)
                     if view.status != "running":

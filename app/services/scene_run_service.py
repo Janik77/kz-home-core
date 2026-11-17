@@ -34,6 +34,18 @@ class SceneRunService:
     def __init__(self, session, transport=None, *, now=command_clock.now):
         self.session, self.transport, self.now = session, transport, now
 
+    source_kind = "scene"
+
+    def definition(self, entity_id):
+        return SceneRepository(self.session).get(entity_id)
+
+    def lock_definition(self, entity_id):
+        from app.models import SceneORM
+        self.session.scalar(select(SceneORM).where(SceneORM.id == entity_id).with_for_update())
+
+    def before_dispatch(self, run):
+        pass
+
     def require_authority(self, house_id, user_id):
         from app.models import UserORM
         from app.repositories.auth_repository import MembershipRepository
@@ -58,6 +70,7 @@ class SceneRunService:
                 house_id=house_id,
                 requested_by=user_id,
                 idempotency_hash=sha256(key.encode("ascii")).hexdigest(),
+                source_kind=self.source_kind,
             )
         )
         if row is None:
@@ -70,7 +83,7 @@ class SceneRunService:
 
     def row(self, house_id, run_id):
         row = self.session.scalar(
-            select(SceneRunORM).filter_by(id=run_id, house_id=house_id)
+            select(SceneRunORM).filter_by(id=run_id, house_id=house_id, source_kind=self.source_kind)
         )
         if row is None:
             raise EntityNotFoundError("Resource not found")
@@ -92,11 +105,12 @@ class SceneRunService:
                 house_id=house_id,
                 requested_by=user_id,
                 idempotency_hash=sha256(key.encode("ascii")).hexdigest(),
+                source_kind=self.source_kind,
             )
         )
         if previous is not None:
             return self.replay(previous, data, token)
-        scene = SceneRepository(self.session).get(data.scene_id)
+        scene = self.definition(data.scene_id)
         if scene.house_id != house_id:
             raise EntityNotFoundError("Resource not found")
         if scene.revision != data.expected_revision:
@@ -111,15 +125,13 @@ class SceneRunService:
 
     def create(self, house_id, user_id, key, data, *, executor_token=None):
         if executor_token:
-            from app.models import HouseORM, SceneORM
+            from app.models import HouseORM
 
             self.session.expire_all()
             self.session.scalar(
                 select(HouseORM).where(HouseORM.id == house_id).with_for_update()
             )
-            self.session.scalar(
-                select(SceneORM).where(SceneORM.id == data.scene_id).with_for_update()
-            )
+            self.lock_definition(data.scene_id)
         digest = sha256(key.encode("ascii")).hexdigest()
         criteria = dict(
             house_id=house_id, requested_by=user_id, idempotency_hash=digest
@@ -127,7 +139,7 @@ class SceneRunService:
         previous = self.session.scalar(select(SceneRunORM).filter_by(**criteria))
         if previous is not None:
             return self.replay(previous, data, executor_token)
-        scene = SceneRepository(self.session).get(data.scene_id)
+        scene = self.definition(data.scene_id)
         if scene.house_id != house_id:
             raise EntityNotFoundError("Resource not found")
         if scene.revision != data.expected_revision:
@@ -159,6 +171,7 @@ class SceneRunService:
                 .where(
                     SceneRunORM.house_id == house_id,
                     SceneRunORM.scene_id == data.scene_id,
+                    SceneRunORM.source_kind == self.source_kind,
                     SceneRunORM.execution_mode == "server",
                     SceneRunORM.execution_finished.is_(False),
                     SceneRunORM.lease_until > self.now(),
@@ -189,6 +202,7 @@ class SceneRunService:
         now = self.now()
         row = SceneRunORM(
             id=str(uuid4()),
+            source_kind=self.source_kind,
             scene_id=scene.id,
             scene_revision=scene.revision,
             created_at=now,
@@ -363,6 +377,7 @@ class SceneRunService:
             if executor_token is None or run.executor_token != executor_token:
                 raise ConflictError("Server runs cannot be dispatched by the client")
             self.require_authority(house_id, user_id)
+            self.before_dispatch(run)
             from app.services.scene_run_admission import require_deadline
 
             require_deadline(self.session, run_id, self.now())

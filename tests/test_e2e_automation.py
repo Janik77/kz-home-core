@@ -1,4 +1,5 @@
 """Offline acceptance tests using real API/Gateway/AutomationService and SQLite."""
+from uuid import uuid4
 
 import asyncio
 import copy
@@ -117,28 +118,21 @@ async def stack(tmp_path, monkeypatch):
             )
 
 
-def test_real_automation_round_trip_and_rerun(tmp_path, monkeypatch):
+def test_legacy_motion_scenario_is_preserved_but_not_executable(tmp_path, monkeypatch):
+    # The durable first slice is Boolean software relays, not the old unconfirmed
+    # motion→update_state path. Full relay round trip lives in test_durable_automations.
     async def check():
         async with stack(tmp_path, monkeypatch) as (api, wire, client, relay, motion):
-            correlations = []
-            for _ in range(2):
-                await provision(api)
-                await scenario(api, client, relay, motion, 3)
-                await api.request("POST", RULE + "/disable")
-                assert (await api.request("GET", MOTION))["state"] == {"motion": True}
-                assert (await api.request("GET", "/devices/e2e_relay"))["state"] == {
-                    "on": True
-                }
-                correlations.append(json.loads(wire.published[-1][1])["correlation_id"])
-            assert len(set(correlations)) == 2
-            assert len(wire.published) == 2
+            await provision(api)
+            await api.request("POST", RULE + "/enable")
+            dry = await api.request("POST", RULE + "/dry-run")
+            assert dry["eligible"] is False
+            assert "unsupported_definition" in dry["issues"]
+            await motion.state(True, str(uuid4()))
+            await asyncio.sleep(0.05)
+            assert len(wire.published) == 0
+            await api.request("POST", RULE + "/disable")
             assert len(await api.request("GET", "/automations")) == 1
-            assert len(await api.request("GET", "/devices?house_id=e2e_house")) == 2
-            # No manual run, direct state mutation, or relay HTTP command can fake success.
-            assert not any(
-                method == "PATCH" or path.endswith(("/run", "/on", "/off", "/state"))
-                for method, path in api.calls
-            )
 
     asyncio.run(check())
 

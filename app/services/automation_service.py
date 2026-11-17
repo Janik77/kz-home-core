@@ -66,9 +66,15 @@ class AutomationService:
     def get(self, entity_id: str) -> AutomationRead:
         return AutomationRead.model_validate(self.repository.get(entity_id))
 
-    def create(self, data: AutomationCreate) -> AutomationRead:
+    def create(
+        self, data: AutomationCreate, *, authorized_by: str | None = None
+    ) -> AutomationRead:
         self._validate(data)
-        return AutomationRead.model_validate(self.repository.create(data.model_dump()))
+        return AutomationRead.model_validate(
+            self.repository.create(
+                {**data.model_dump(), "authorized_by": authorized_by}
+            )
+        )
 
     def update(
         self,
@@ -76,10 +82,13 @@ class AutomationService:
         data: AutomationUpdate,
         *,
         expected_house_id: str | None = None,
+        authorized_by: str | None = None,
     ) -> AutomationRead:
         values = data.model_dump(
             exclude_unset=True, exclude_none=True, exclude={"expected_revision"}
         )
+        if authorized_by is not None:
+            values["authorized_by"] = authorized_by
         current = self.get(entity_id)
         if (
             data.expected_revision is not None
@@ -103,11 +112,21 @@ class AutomationService:
         self.repository.delete(entity_id)
 
     def set_enabled(
-        self, entity_id: str, enabled: bool, *, expected_house_id: str | None = None
+        self,
+        entity_id: str,
+        enabled: bool,
+        *,
+        expected_house_id: str | None = None,
+        authorized_by: str | None = None,
     ) -> AutomationRead:
         return AutomationRead.model_validate(
             self.repository.update(
-                entity_id, {"enabled": enabled}, expected_house_id=expected_house_id
+                entity_id,
+                {
+                    "enabled": enabled,
+                    **({"authorized_by": authorized_by} if authorized_by else {}),
+                },
+                expected_house_id=expected_house_id,
             )
         )
 

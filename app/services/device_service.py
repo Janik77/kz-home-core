@@ -139,12 +139,18 @@ class DeviceService:
         patch: DeviceState,
         *,
         correlation_id: str = "",
+        observed_at=None, retained=True,
     ) -> DeviceRead:
         self.require_house(house_id, device_id, lock=True)
         entity = self.repository.get(device_id)
         self.state_validator.validate_report(self._read(entity), patch)
+        from app.services.command_service import utc
+        from datetime import UTC, datetime, timedelta
+        now = datetime.now(UTC)
+        eligible = not retained and observed_at is not None and now - timedelta(minutes=2) <= utc(observed_at) <= now + timedelta(seconds=5)
+        entity = self.repository.update(device_id, {"state_observed_at": min(now, utc(observed_at)) if eligible else None})
         return await self._persist_state(
-            entity, device_id, patch, correlation_id=correlation_id
+            entity, device_id, patch, correlation_id=correlation_id, automation_eligible=eligible
         )
 
     async def _persist_state(
@@ -155,6 +161,7 @@ class DeviceService:
         *,
         correlation_id: str,
         depth: int = 0,
+        automation_eligible: bool = False,
     ) -> DeviceRead:
         changed = {
             key: value for key, value in patch.items() if entity.state.get(key) != value
@@ -170,6 +177,7 @@ class DeviceService:
                     "device_id": device_id,
                     "house_id": self.repository.house_id(device_id),
                     "state": changed,
+                    "automation_eligible": automation_eligible,
                 },
                 correlation_id=correlation_id,
                 depth=depth,

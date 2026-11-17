@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: Janik77/kz-home-web
-          ref: c55dba53cb093c55d006dcd76f54b823a6f6e2be
+          ref: 420312fc9e6afde5e65c1f5085f050ae3ccc1550
           path: web
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -47,6 +47,7 @@ jobs:
           npm ci
           npm --prefix ../web-before ci
           npx playwright install chromium
+          npx playwright install --with-deps chrome
       - name: Web typecheck, lint, unit tests and build
         working-directory: web
         run: |
@@ -71,11 +72,17 @@ jobs:
       - name: Real browser, Core, MQTT TLS, software relay and PostgreSQL receipts
         working-directory: web
         run: '"$RUNNER_TEMP/unified-venv/bin/python" -B e2e/confirmed-live-runner.py'
+      - name: Automation editor and durable results with real PostgreSQL and MQTT
+        working-directory: web
+        run: '"$RUNNER_TEMP/unified-venv/bin/python" -B e2e/automation-live-runner.py'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
           name: unified-software-evidence
           path: |
+            web/test-results/automation-live-evidence.json
+            web/test-results/automation-live/**/*.webm
+            web/test-results/automation-*.png
             web/test-results/confirmed-live-evidence.json
             web/test-results/scene-live-evidence.json
             web/test-results/confirmed-live/**/*.webm

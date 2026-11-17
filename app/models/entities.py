@@ -118,6 +118,7 @@ class RoomORM(TimestampMixin, Base):
 
 class DeviceORM(TimestampMixin, Base):
     __tablename__ = "devices"
+    state_observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     __table_args__ = (Index("ix_devices_type", "type"),)
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(255))
@@ -148,6 +149,7 @@ class SceneORM(TimestampMixin, Base):
 
 class AutomationORM(TimestampMixin, Base):
     __tablename__ = "automations"
+    authorized_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     __table_args__ = (Index("ix_automations_house_enabled", "house_id", "enabled"),)
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
