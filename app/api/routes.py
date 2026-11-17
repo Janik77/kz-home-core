@@ -628,7 +628,7 @@ def build_router(
         user: UserORM = Depends(get_current_user),
     ):
         require(session, user, data.house_id, Permission.AUTOMATION_MANAGE)
-        return automation_service(session).create(data)
+        return automation_service(session).create(data, authorized_by=user.id)
 
     @router.get("/automations", response_model=list[AutomationRead])
     def list_automations(
@@ -669,7 +669,7 @@ def build_router(
         )
         if data.house_id is not None:
             require(session, user, data.house_id, Permission.AUTOMATION_MANAGE)
-        return automation_service(session).update(entity_id, data, expected_house_id=source_house)
+        return automation_service(session).update(entity_id, data, expected_house_id=source_house, authorized_by=user.id)
 
     @router.delete("/automations/{entity_id}", status_code=204)
     def delete_automation(
@@ -699,7 +699,7 @@ def build_router(
             source_house,
             Permission.AUTOMATION_MANAGE,
         )
-        return automation_service(session).set_enabled(entity_id, True, expected_house_id=source_house)
+        return automation_service(session).set_enabled(entity_id, True, expected_house_id=source_house, authorized_by=user.id)
 
     @router.post("/automations/{entity_id}/disable", response_model=AutomationRead)
     def disable_automation(
@@ -728,7 +728,39 @@ def build_router(
             house_for(session, "automation", entity_id),
             Permission.AUTOMATION_MANAGE,
         )
-        return await automation_service(session).manual_run(entity_id)
+        raise HTTPException(409, "Legacy automation execution is disabled; use state-triggered execution")
+
+    @router.post("/automations/{entity_id}/dry-run")
+    async def automation_dry_run(entity_id: str, session: Session = Depends(get_session), user: UserORM = Depends(get_current_user)):
+        from app.services.automation_runs import AutomationRunService
+        rule = AutomationRepository(session).get(entity_id)
+        require(session, user, rule.house_id, Permission.AUTOMATION_MANAGE)
+        require(session, user, rule.house_id, Permission.DEVICE_READ)
+        return await AutomationRunService(session, transport).dry_run(rule)
+
+    @router.get("/automations/{entity_id}/runs")
+    def automation_runs(entity_id: str, session: Session = Depends(get_session), user: UserORM = Depends(get_current_user)):
+        from sqlalchemy import select
+        from app.models import SceneRunORM
+        from app.services.automation_runs import AutomationRunService
+        rule = AutomationRepository(session).get(entity_id)
+        require(session, user, rule.house_id, Permission.AUTOMATION_READ)
+        require(session, user, rule.house_id, Permission.DEVICE_READ)
+        service = AutomationRunService(session, transport)
+        rows = list(session.scalars(select(SceneRunORM).where(SceneRunORM.source_kind == "automation", SceneRunORM.scene_id == entity_id, SceneRunORM.house_id == rule.house_id).order_by(SceneRunORM.created_at.desc()).limit(20)))
+        return [service.view(row) for row in rows]
+
+    @router.get("/automations/{entity_id}/runs/{run_id}")
+    def automation_run(entity_id: str, run_id: str, session: Session = Depends(get_session), user: UserORM = Depends(get_current_user)):
+        from app.services.automation_runs import AutomationRunService
+        rule = AutomationRepository(session).get(entity_id)
+        require(session, user, rule.house_id, Permission.AUTOMATION_READ)
+        require(session, user, rule.house_id, Permission.DEVICE_READ)
+        service = AutomationRunService(session, transport)
+        row = service.row(rule.house_id, run_id)
+        if row.source_kind != "automation" or row.scene_id != entity_id:
+            raise HTTPException(404, "Resource not found")
+        return service.view(row)
 
     @router.get("/events", response_model=list[EventLogRead])
     def list_events(

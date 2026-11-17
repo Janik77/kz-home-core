@@ -19,13 +19,13 @@ import traceback
 from uuid import uuid4
 
 CORE = Path(__file__).resolve().parents[1]
-CORE_SHA = "9d931d6d21cfc92a3d4173cf5f670dea53102ef2"
-WEB_SHA = "c55dba53cb093c55d006dcd76f54b823a6f6e2be"
+CORE_SHA = "f6a0826929c87b39dec7e81d22280f1218bf18f1"
+WEB_SHA = "1e18ec20afc444b07d14e409fd733ba2ed9f0f95"
 PG = "postgres:17-bookworm@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6ef6225b3e5d59c7afb35e994"
 MQTT = "eclipse-mosquitto:2@sha256:75d6662dee52c947dc9dd9c29f1d8d7ffef78ddaf38001caa09755681e8bbc98"
 OPENSSL = "alpine/openssl:latest@sha256:6821afa2476e11be343f29275f2ca24291720ff0a7148bd131fd8e314ff26d9e"
 LABEL = "kzhome.durable-software"
-EXPECTED_MIGRATION = "0012_server_scene_execution"
+EXPECTED_MIGRATION = "0013_device_automations"
 BROKER_FILES = ("ca.crt", "server.crt", "server.key", "passwd", "acl", "mosquitto.conf")
 FILES = (
     "profile.json",
@@ -512,13 +512,15 @@ def legacy_fingerprints(profile):
     for table in tables:
         if not re.fullmatch(r"[a-z][a-z0-9_]*", table):
             raise ValueError("Unexpected source table")
-        # 0012 adds execution metadata to scene_runs; compare every original
-        # field byte-for-byte, then validate the new defaults independently.
+        # Fixed old columns on both sides; validate additive metadata separately.
+        columns = {
+            "scene_runs": "id, house_id, requested_by, idempotency_hash, scene_id, scene_revision, created_at, dispatch_deadline",
+            "devices": "id, name, room_id, type, state, capabilities, metadata, online, created_at, updated_at",
+            "automations": "id, name, house_id, enabled, trigger, conditions, actions, created_at, updated_at, revision",
+        }
         source = (
-            "(SELECT id, house_id, requested_by, idempotency_hash, scene_id, "
-            "scene_revision, created_at, dispatch_deadline FROM public.scene_runs)"
-            if table == "scene_runs"
-            else f'public."{table}"'
+            f'(SELECT {columns[table]} FROM public."{table}")'
+            if table in columns else f'public."{table}"'
         )
         result[table] = profile.query(
             f"""SELECT count(*) || ':' || md5(COALESCE(string_agg(row_to_json(t)::text, E'\\n' ORDER BY row_to_json(t)::text),'')) FROM {source} t"""
@@ -559,13 +561,21 @@ def migrate_upgrade(profile):
         engine.dispose()
     if legacy_fingerprints(profile) != before:
         raise ValueError("Upgrade changed existing data")
+    validate_migrated_metadata(profile)
+
+
+def validate_migrated_metadata(profile):
     if (
         profile.query(
-            "SELECT count(*) FROM scene_runs WHERE execution_mode IS DISTINCT FROM 'manual' OR executor_token IS NOT NULL OR lease_until IS NOT NULL OR execution_error IS NOT NULL OR execution_finished IS DISTINCT FROM false"
+            "SELECT count(*) FROM scene_runs WHERE execution_mode IS DISTINCT FROM 'manual' OR executor_token IS NOT NULL OR lease_until IS NOT NULL OR execution_error IS NOT NULL OR execution_finished IS DISTINCT FROM false OR source_kind IS DISTINCT FROM 'scene'"
         )
         != "0"
     ):
         raise ValueError("Unexpected migrated server execution metadata")
+    if profile.query("SELECT count(*) FROM devices WHERE state_observed_at IS NOT NULL") != "0":
+        raise ValueError("Unexpected migrated device observation metadata")
+    if profile.query("SELECT count(*) FROM automations WHERE authorized_by IS NOT NULL") != "0":
+        raise ValueError("Unexpected migrated automation authority")
     if profile.query("SELECT count(*) FROM device_favorites") != "0":
         raise ValueError("Unexpected migrated favorites")
 

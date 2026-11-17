@@ -73,6 +73,8 @@ def test_definition_revision_migration_preserves_rows(tmp_path, backend):
                     table = Table(name, MetaData(), autoload_with=conn)
                     row = dict(conn.execute(select(table)).mappings().one())
                     assert row.pop("revision") == 1
+                    if name == "automations":
+                        assert row.pop("authorized_by") is None
                     assert row == original
                     column = next(
                         c

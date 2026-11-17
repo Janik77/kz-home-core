@@ -1,140 +1,153 @@
-# Isolated software upgrade and rollback
+# KZ Home: отдельный программный стенд автоматизаций
 
-This integration uses Core #43 `5b87f4b71a7a2a99d4dd3d288c7f1ec76ab781f2`,
-migration `0011_device_favorites`, and unmodified Web #25
-`d6533042b950ded2f8b90dbec1af5a05fd078ce0`. Core independent review is complete;
-Web #25 independent review is complete. This draft's exact tested integration SHA/CI links are in its PR.
+Версии-кандидаты: Core `617c1efb96a3e6422ac3abefd7440ef5382fed20`, Web `1e18ec20afc444b07d14e409fd733ba2ed9f0f95`.
 
-Only ONE upgrade input is supported:
-- backup made with the exact clean Core #42 tool checkout
-  `82653a849d2b61479de1c3bb4d74e7f388523667`;
-- profile runtime `f946a07f67f9ccb1e8f62c99860a0842bf3a062b`;
+**Статус:** пара Core617c/Web1e18 прошла все четыре Core workflows, включая совместный browser/реальный PostgreSQL/MQTTTLS и actual automation SIGKILL. Дополнительная проверка сохранения именно automation run/receipt при backup/restore добавлена в test-only follow-up; её новый CI нужно подтвердить отдельно. На ПК владельца эта версия пока не установлена: компьютер был недоступен. Проверки GitHub не подтверждают состояние локальных папок или Docker владельца.
+
+## 1. Сначала только проверка существующих папок
+
+Открыть обычный Ubuntu/WSL-терминал пользователя `janik`, без `sudo`. Исторически использовались эти папки; несмотря на слово `disposable`, повторно клонировать их для этой инструкции не нужно:
+
+```bash
+set -euo pipefail
+CORE="$HOME/kzhome-test/disposable-20261115/core"
+WEB="$HOME/kzhome-test/disposable-20261115/web"
+printf 'Core: %s\nWeb: %s\n' "$CORE" "$WEB"
+for P in "$CORE" "$WEB"; do
+  test -d "$P/.git" -o -f "$P/.git" || { echo "Нет ожидаемого checkout: $P"; exit 1; }
+  git -C "$P" remote get-url origin
+  git -C "$P" rev-parse HEAD
+  git -C "$P" status --short
+  test -z "$(git -C "$P" status --porcelain)" || { echo "Есть изменения. Остановиться, ничего не перезаписывать."; exit 1; }
+  find "$P" -maxdepth 1 -name '.env*' ! -name '.env.example' -print
+ done
+python3.12 --version
+node --version
+npm --version
+docker info --format '{{.ServerVersion}}'
+```
+
+Условия продолжения:
+- origin относится именно к `Janik77/kz-home-core` и `Janik77/kz-home-web`;
+- обе рабочие папки чистые, нет реальных `.env`/`.env.local` и неизвестных локальных файлов конфигурации;
+- подтверждено, что никакой текущий стенд/процесс не использует эти checkout;
+- Python 3.12, Node 24, Docker доступны без изменения прав, групп или настройки демона.
+
+Если путь, состояние или назначение папки отличается, **остановиться**. Не применять `reset --hard`, `clean`, удаление/перезапись, автоматический stash. Не переключать checkout, который используется другим процессом. Не останавливать всю WSL/Docker и другие проекты. Не трогать Windows-папки `C:\projects\...`, их изменения и документы наставнику.
+
+## 2. Зафиксировать версию только после успешной проверки
+
+Этот раздел не следует запускать автоматически вслед за проверкой: сначала подтвердить перечисленные условия. Он не меняет `main`, а переводит только проверенные свободные рабочие папки на точные тестовые коммиты.
+
+```bash
+set -euo pipefail
+CORE_SHA=617c1efb96a3e6422ac3abefd7440ef5382fed20
+WEB_SHA=1e18ec20afc444b07d14e409fd733ba2ed9f0f95
+git -C "$CORE" fetch origin feature/durable-device-automations
+git -C "$WEB" fetch origin feature/complete-automation-workspace
+git -C "$CORE" cat-file -e "$CORE_SHA^{commit}" && git -C "$WEB" cat-file -e "$WEB_SHA^{commit}"
+git -C "$CORE" switch --detach "$CORE_SHA"
+git -C "$WEB" switch --detach "$WEB_SHA"
+test "$(git -C "$CORE" rev-parse HEAD)" = "$CORE_SHA"
+test "$(git -C "$WEB" rev-parse HEAD)" = "$WEB_SHA"
+```
+
+Создать отдельное окружение только для стенда, не заменяя прежнее:
+
+```bash
+VENV="$HOME/.local/share/kzhome-software/venv-automation-pilot"
+test ! -e "$VENV" || { echo 'Окружение уже существует: сначала проверить его назначение, не перезаписывать.'; exit 1; }
+python3.12 -m venv "$VENV"
+"$VENV/bin/python" -m pip install -r "$CORE/requirements-dev.txt"
+"$VENV/bin/python" -m pip check
+npm --prefix "$WEB" ci
+```
+
+## 3. Новый постоянный профиль: создать ровно один раз
+
+Это новая изолированная программная лаборатория, не восстановление старого тестового дома. Старый `acknowledgement-profile` и его служебные привязки оставить как есть. Не редактировать `profile.json`, inode/device identity, hashes, pins или Docker labels вручную.
+
+```bash
+STATE="$HOME/.local/share/kzhome-software/automation-pilot-v1"
+test ! -e "$STATE" || { echo 'Профиль уже существует: init повторять нельзя.'; exit 1; }
+"$VENV/bin/python" -B "$CORE/tools/durable_software.py" init --state "$STATE"
+"$VENV/bin/python" -B "$CORE/tools/durable_software.py" start --state "$STATE" --web-root "$WEB"
+```
+
+Launcher напечатает локальный адрес. Открыть именно его в браузере Windows. Вход `owner@example.test`; пароль находится в локальном приватном `profile.json`. Не присылайте этот файл и не загружайте профиль/backup в GitHub. Если адрес из Windows недоступен, не менять сеть/VPN/защиту: проверить отдельно доступность loopback WSL.
+
+Только программное MQTT-реле; физических устройств в этом стенде нет. Общий путь: создать и сохранить отключённое правило → «Проверить условия (без команд)» → включить → изменить программное состояние → проверить итог и квитанции действий. ACK без подтверждённого состояния не считается успехом. На неизвестный исход не нажимать повторно вслепую.
+
+## 4. Остановка и повторный запуск
+
+**Это foreground-запуск, не проверенный фоновый supervisor.** Оставить терминал открытым. Для остановки нажать `Ctrl+C` в этом терминале: процессы стенда остановятся, PostgreSQL volume и профиль сохранятся. Закрытие терминала/выключение ПК не следует считать эквивалентом штатной остановки.
+
+После штатной остановки:
+
+```bash
+"$VENV/bin/python" -B "$CORE/tools/durable_software.py" status --state "$STATE"
+"$VENV/bin/python" -B "$CORE/tools/durable_software.py" start --state "$STATE" --web-root "$WEB"
+```
+
+В новом терминале заново задать `CORE`, `WEB`, `VENV`, `STATE` теми же значениями. **Не повторять `init`, clone или создание окружения.** Если launcher уже завершился, но его контейнеры остались, предусмотрена команда `stop --state "$STATE"`; она действует только на ресурсы этого профиля. Когда launcher активен, сначала нужен `Ctrl+C`: другие lifecycle-команды не обходят его lock.
+
+Удобный start/stop из отдельной команды, автозапуск после входа, systemd/supervisor здесь не обещаны. Отдельный WIP #48 в эту версию не входит.
+
+## 5. Backup и восстановление в новый профиль
+
+Только после первого успешного запуска и штатной остановки. Папки назначения не должны существовать. Backup содержит пароли и данные, хранить локально приватно.
+
+```bash
+BACKUP="$HOME/.local/share/kzhome-software/backups/automation-pilot-$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$(dirname "$BACKUP")"
+"$VENV/bin/python" -B "$CORE/tools/durable_software.py" backup --state "$STATE" --destination "$BACKUP"
+RESTORED="$HOME/.local/share/kzhome-software/automation-pilot-restored-v1"
+test ! -e "$RESTORED" || { echo 'Папка восстановления уже существует.'; exit 1; }
+"$VENV/bin/python" -B "$CORE/tools/durable_software.py" restore --backup "$BACKUP" --state "$RESTORED"
+"$VENV/bin/python" -B "$CORE/tools/durable_software.py" start --state "$RESTORED" --web-root "$WEB"
+```
+
+Это exact-version restore в новый профиль; исходный профиль и backup не перезаписываются. Для дальнейшей работы выбрать один профиль, не запускать две лаборатории с ожиданием общей базы. Возврат: остановить восстановленный launcher и запустить исходный `STATE`. Не делать downgrade схемы или ручное копирование служебных JSON.
+
+При `PROFILE_FAILURE`, несовпадении identity, дрейфе часов или незавершённом restore сохранить файлы, остановиться и передать только тип ошибки/безопасный лог, без секретов. Не «чинить» проверку вручную и не повторять команды управления с неизвестным исходом.
+
+
+## Приложение: единственный поддерживаемый межверсионный upgrade
+
+Для нового стенда выше этот раздел **не нужен**. Он не разрешает экспериментальное восстановление старого проблемного профиля. Межверсионный `upgrade` принимает только собственный доверенный backup со следующими точными исходными версиями:
+
+- Core #42 tooling `82653a849d2b61479de1c3bb4d74e7f388523667`;
+- исходный runtime `f946a07f67f9ccb1e8f62c99860a0842bf3a062b`;
 - Web #20 `c2c4fa89a0da3652e8e0cca3629300ecfd7e658f`;
-- complete owner/path/device/inode/database identity fields and manifest;
-- restored source database at exactly `0010_scene_runs`, no physical inventory.
+- схема `0010_scene_runs`, нулевой физический inventory;
+- полные, неизменённые identity/owner/path/device/inode/database поля и manifest.
 
-Profiles created by Core #44/Web #23 or Core #45/Web #24 are not accepted by this
-checkout. Keep using their exact Core checkout: #44
-`733a1b31cdf4eb8a97e732ebf4ed6bf9cc243518`, or #45
-`42668c320e2937768c2a210ac5f15fc9c746c1ff`, respectively.
-This pin update does not add an upgrade path from either intermediate profile. It preserves the
-single #42/Web #20 source contract above.
+Назначение: runtime `f6a0826929c87b39dec7e81d22280f1218bf18f1`, Web `1e18ec20afc444b07d14e409fd733ba2ed9f0f95`, схема `0013_device_automations`; tooling617c. Backup из промежуточных #43/#44/#45/#46/#47, иных Web pins,0011/0012 или произвольных ревизий **не поддержан** этой командой. Не заменять их pins, не править identity и не выдавать ordinary restore за межверсионную миграцию.
 
-Earlier draft profiles without identity, #40/#41 Web pins, intermediate #43 runtime
-pins, other revisions and arbitrary cross-version backups are unsupported. Ordinary
-restore stays exact-version only. Never edit profile JSON, hashes, pins, labels or
-bindings to bypass refusal. The dedicated upgrade creates new bindings itself.
-
-## Setup in a fresh development directory
-
-Use an ordinary Ubuntu WSL user with already working Docker Desktop integration,
-Python 3.12/venv, Node 24/npm and Git. No sudo, added groups/privileges, daemon changes,
-or use of kzhome-local, mentoring demo or orchestrator VM. Keep profiles on the Linux
-home filesystem. The user's WSL machine has not been tested.
+Только после отдельного подтверждения исходных checkout/профиля и остановки его foreground launcher можно задать абсолютные `OLD_CORE`, `OLD_WEB`, `OLD_PYTHON`, `OLD_STATE` (исходное положение профиля) и выполнить:
 
 ```bash
-git clone --branch codex/integrated-web25 https://github.com/Janik77/kz-home-core.git core-new
-git -C core-new rev-parse HEAD
-git clone https://github.com/Janik77/kz-home-web.git web-new
-git -C web-new checkout --detach d6533042b950ded2f8b90dbec1af5a05fd078ce0
-python3.12 -m venv .venv-new
-.venv-new/bin/python -m pip install -r core-new/requirements-dev.txt
-.venv-new/bin/python -m pip check
-npm --prefix web-new ci
+set -euo pipefail
+: "${OLD_CORE:?нужен проверенный исходный checkout}"
+: "${OLD_WEB:?нужен проверенный исходный checkout Web}"
+: "${OLD_PYTHON:?нужен Python исходного окружения}"
+: "${OLD_STATE:?нужен исходный абсолютный путь профиля}"
+test "$(git -C "$OLD_CORE" rev-parse HEAD)" = 82653a849d2b61479de1c3bb4d74e7f388523667
+test "$(git -C "$OLD_WEB" rev-parse HEAD)" = c2c4fa89a0da3652e8e0cca3629300ecfd7e658f
+test -z "$(git -C "$OLD_CORE" status --porcelain)"
+test -z "$(git -C "$OLD_WEB" status --porcelain)"
+SOURCE_BACKUP="$HOME/.local/share/kzhome-software/backups/source42-$(date -u +%Y%m%dT%H%M%SZ)"
+UPGRADED="$HOME/.local/share/kzhome-software/automation-from42-v1"
+test ! -e "$SOURCE_BACKUP" && test ! -e "$UPGRADED"
+"$OLD_PYTHON" -B "$OLD_CORE/tools/durable_software.py" backup --state "$OLD_STATE" --destination "$SOURCE_BACKUP"
+"$VENV/bin/python" -B "$CORE/tools/durable_software.py" upgrade --source-checkout "$OLD_CORE" --backup "$SOURCE_BACKUP" --state "$UPGRADED"
+"$VENV/bin/python" -B "$CORE/tools/durable_software.py" start --state "$UPGRADED" --web-root "$WEB"
 ```
 
-Pin core-new to the exact tested integration SHA shown in the PR before use.
-For a completely new home (no old data), use a NEW path:
+Upgrade проверяет whitelist/checksums, исходную схему и identity, создаёт **новые** profile/network/volume/owner/path bindings, восстанавливает и мигрирует только новый PostgreSQL. Исходный профиль и backup не перемещаются и не изменяются. Старые колонки всех таблиц сравниваются ordered row fingerprints/counts; отдельно проверены defaults добавленных колонок: scene source=scene/manual, authority и observed state=NULL, favorites из исходной0010 отсутствуют и после upgrade пусты. Существующие правила требуют явного authorized edit/enable перед использованием.
 
-```bash
-mkdir -p "$HOME/.local/share/kzhome-software"
-.venv-new/bin/python -B core-new/tools/durable_software.py init --state "$HOME/.local/share/kzhome-software/favorites-new"
-.venv-new/bin/python -B core-new/tools/durable_software.py start --state "$HOME/.local/share/kzhome-software/favorites-new" --web-root web-new
-```
+`initialized` появляется атомарно только после успешных проверок, marker writes и штатной остановки. Partial target сохраняется для диагностики, его нельзя переиспользовать, reseed или вручную объявить initialized. Manifest проверяет целостность, но не является цифровой подписью: использовать только собственный доверенный SQL-backup (dump способен выполнять SQL).
 
-The launcher prints a loopback URL. Login owner@example.test; private generated
-password is the password field of profile.json. Ctrl-C stops services, retains data.
-Do not use init on an existing profile.
+Откат — остановить новый launcher и открыть **неизменённый** старый своим старым checkout/окружением; это не downgrade БД. Изменения, сделанные только в новом профиле, назад не копируются. Сохранить обе истории. Не следует заключать, что реальное устройство выключено, только по восстановленной записи или откату.
 
-## Upgrade an existing supported profile
-
-First Ctrl-C the ORIGINAL launcher and wait for shutdown. Keep its directory at
-its original path/inode and keep its database volume. Do not copy/rename it.
-Prepare a separate clean old checkout; dependencies stay outside both repositories:
-
-```bash
-git clone https://github.com/Janik77/kz-home-core.git core-before
-git -C core-before checkout --detach 82653a849d2b61479de1c3bb4d74e7f388523667
-git clone https://github.com/Janik77/kz-home-web.git web-before
-git -C web-before checkout --detach c2c4fa89a0da3652e8e0cca3629300ecfd7e658f
-python3.12 -m venv .venv-old
-.venv-old/bin/python -m pip install -r core-before/requirements-dev.txt
-npm --prefix web-before ci
-```
-
-Set KZ_OLD_STATE to the ORIGINAL absolute profile path; this assignment does not
-modify its recorded path. Destination/backup paths below must not already exist:
-
-```bash
-KZ_OLD_STATE="/absolute/path/to/your/existing-supported-profile"
-mkdir -p "$HOME/.local/share/kzhome-software/backups"
-.venv-old/bin/python -B core-before/tools/durable_software.py backup --state "$KZ_OLD_STATE" --destination "$HOME/.local/share/kzhome-software/backups/pre-favorites-001"
-.venv-new/bin/python -B core-new/tools/durable_software.py upgrade --source-checkout core-before --backup "$HOME/.local/share/kzhome-software/backups/pre-favorites-001" --state "$HOME/.local/share/kzhome-software/favorites-upgraded"
-.venv-new/bin/python -B core-new/tools/durable_software.py start --state "$HOME/.local/share/kzhome-software/favorites-upgraded" --web-root web-new
-```
-
-Upgrade reads the trusted local backup, verifies whitelist/checksums, exact pins and
-required source identity, allocates a NEW owner/path/network/volume, restores into an
-empty database, checks the actual source revision, and migrates only the new database.
-All old public tables are compared before/after migration using ordered row fingerprints
-and row counts. Users, memberships, house/room/device definitions, scene revisions,
-runs, claims, receipts and auth records must be unchanged. Favorites starts empty.
-The upgraded target gets its own database identity and Web port; inherited lab login
-credentials remain valid. Browser localStorage/theme preferences are not DB backup data.
-
-The final initialized marker is published by atomic rename only after migration/data
-checks, the seeded marker write and shutdown all succeed. Failed marker writes leave
-the target unstartable (including a partially written pending completion file). On failure,
-only the new target is stopped and left for inspection; it cannot be started, reused
-as an existing target or automatically reset. Source profile and backup are not deleted
-or rewritten. Never turn a partial target into an initialized one manually.
-
-The old manifest is checksum-based, not signed: the exact source-checkout check does
-not cryptographically prove who created a backup. Accept ONLY your own trusted backup
-made with the old command above. A database dump can contain executable SQL.
-Backups contain lab passwords/hashes/JWT/private CA material; keep them private and
-never commit them or upload them as CI artifacts.
-
-## Backup/restore of the new profile
-
-Ctrl-C first. Use new destinations:
-
-```bash
-.venv-new/bin/python -B core-new/tools/durable_software.py backup --state "$HOME/.local/share/kzhome-software/favorites-upgraded" --destination "$HOME/.local/share/kzhome-software/backups/post-favorites-001"
-.venv-new/bin/python -B core-new/tools/durable_software.py restore --backup "$HOME/.local/share/kzhome-software/backups/post-favorites-001" --state "$HOME/.local/share/kzhome-software/favorites-restored"
-.venv-new/bin/python -B core-new/tools/durable_software.py start --state "$HOME/.local/share/kzhome-software/favorites-restored" --web-root web-new
-```
-
-Active profiles, missing/foreign storage, wrong database identity/migration, corrupt
-manifests, symlinks and occupied targets remain refused. No pruning/delete command exists.
-
-## Rollback without downgrade or data loss in the source
-
-Ctrl-C the NEW launcher, keep its volume/profile and post-upgrade backup, then:
-
-```bash
-.venv-old/bin/python -B core-before/tools/durable_software.py start --state "$KZ_OLD_STATE" --web-root web-before
-```
-
-This starts the untouched original at 0010. It does not downgrade/overwrite the new
-database. Changes made ONLY in the new profile (including favorites and later commands)
-are not copied back; preserve both histories. A previously pending scene remains subject
-to its original deadline, and rollback never automatically resumes/replays actions.
-No safe/OFF conclusion follows from rollback or a stored receipt.
-
-CI uses real PostgreSQL/Mosquitto TLS and the existing Python Relay: old exact-SHA
-backup, negative/partial upgrade cases, all legacy row preservation, user/home favorites
-isolation, ON/restart/explicit OFF, new backup/restore and old-checkout rollback.
-Only labelled profiles under the test's fresh temp root are cleaned; inventory must
-match its baseline. No private backup artifacts are uploaded. This is not firmware C,
-hardware, multi-day soak, power-loss or user-machine qualification.
+Доказательство migration/restore: GitHub run `44115292279`, durable `44115292349`, оба для Core617c. Проверены изолированные PostgreSQL/MosquittoTLS и Python-реле, не ПК владельца и не оборудование. Очистка CI относится лишь к собственным временным тестовым ресурсам; CLI не предоставляет prune/delete.

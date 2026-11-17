@@ -171,6 +171,7 @@ def snapshot(http):
         "/houses/fixture_house",
         "/rooms/saved_room",
         "/scenes/saved_scene",
+        "/automations/saved_automation",
         "/v1/houses/fixture_house/me/device-favorites",
     )
     values = {}
@@ -264,6 +265,31 @@ def main():
                 http.get("/core-api/devices/fixture_relay").json()["state"]
                 == before_commands
             )
+            response = http.post(
+                "/core-api/automations",
+                json={
+                    "id": "saved_automation",
+                    "name": "Persistent software rule",
+                    "house_id": "fixture_house",
+                    "enabled": False,
+                    "trigger": {
+                        "type": "device_state",
+                        "device_id": "fixture_relay",
+                        "field": "on",
+                        "operator": "eq",
+                        "value": True,
+                    },
+                    "conditions": [],
+                    "actions": [
+                        {
+                            "type": "device_state",
+                            "device_id": "fixture_relay",
+                            "state": {"on": False},
+                        }
+                    ],
+                },
+            )
+            assert response.status_code == 201, response.text
             expected = snapshot(http)
             command(http, True)
             command(http, False)
@@ -272,7 +298,7 @@ def main():
                 headers={"Idempotency-Key": uuid4().hex},
                 json={
                     "scene_id": "saved_scene",
-                    "expected_revision": response.json()["revision"],
+                    "expected_revision": expected["/scenes/saved_scene"]["revision"],
                 },
             )
             assert created.status_code == 201
@@ -369,7 +395,52 @@ def main():
                 first_action["receipt"]["command_id"]
                 != completed_run["actions"][1]["receipt"]["command_id"]
             )
+            response = http.patch(
+                "/core-api/automations/saved_automation",
+                json={"expected_revision": 1, "enabled": True},
+            )
+            assert response.status_code == 200, response.text
+            # A real manual relay command supplies an unrelated MQTT state event;
+            # the enabled rule then dispatches OFF through the confirmed executor.
             command(http, True)
+            until = time.monotonic() + 20
+            while time.monotonic() < until:
+                response = http.get("/core-api/automations/saved_automation/runs")
+                assert response.status_code == 200, response.text
+                automation_history = response.json()
+                if (
+                    automation_history
+                    and automation_history[0]["status"] == "succeeded"
+                    and source.query(
+                        "SELECT count(*) FROM scene_runs WHERE source_kind='automation' AND scene_id='saved_automation' AND execution_finished IS TRUE"
+                    )
+                    == "1"
+                ):
+                    break
+                time.sleep(0.1)
+            else:
+                raise AssertionError("Durable automation lacks confirmed ACK/state")
+            assert len(automation_history) == 1
+            action = automation_history[0]["actions"][0]
+            assert action["status"] == "applied" and action["requested_on"] is False
+            assert action["receipt"]["ack_status"] == "applied"
+            assert action["receipt"]["reported_on"] is False
+            assert action["receipt"]["state_received_at"]
+            response = http.patch(
+                "/core-api/automations/saved_automation",
+                json={"expected_revision": 2, "enabled": False},
+            )
+            assert response.status_code == 200, response.text
+            expected = snapshot(http)
+            expected_command_count = source.query(
+                "SELECT count(*) FROM device_commands"
+            )
+            assert (
+                source.query(
+                    "SELECT count(*) FROM scene_run_receipts l JOIN scene_runs r ON r.id=l.run_id WHERE r.source_kind='automation'"
+                )
+                == "1"
+            )
         halt(process)
         process = None
         with source.lock():
@@ -406,6 +477,20 @@ def main():
         with httpx.Client(base_url=url, trust_env=False, timeout=5) as http:
             login(http, restored)
             assert snapshot(http) == expected
+            assert (
+                http.get("/core-api/automations/saved_automation/runs").json()
+                == automation_history
+            )
+            assert (
+                restored.query("SELECT count(*) FROM device_commands")
+                == expected_command_count
+            )
+            assert (
+                restored.query(
+                    "SELECT count(*) FROM scene_run_receipts l JOIN scene_runs r ON r.id=l.run_id WHERE r.source_kind='automation'"
+                )
+                == "1"
+            )
             favorite_path = "/core-api/v1/houses/fixture_house/me/device-favorites"
             assert http.delete(favorite_path + "/fixture_relay").status_code == 204
             assert http.get(favorite_path).json() == {"device_ids": []}
@@ -421,6 +506,18 @@ def main():
         with httpx.Client(base_url=url, trust_env=False, timeout=5) as http:
             login(http, source)
             assert snapshot(http) == expected, "Restore modified source"
+            assert (
+                http.get("/core-api/automations/saved_automation/runs").json()
+                == automation_history
+            )
+            assert (
+                source.query("SELECT count(*) FROM device_commands")
+                == expected_command_count
+            )
+            print(
+                "PASS automation durable: disabled rule survives restart; real MQTT trigger ACK/state result and exact receipt history survive backup/restore and source restart; no replay; rooms/scenes/favorites unchanged",
+                flush=True,
+            )
         halt(process)
         process = None
         # Corrupt backup rejected before creating resources or destination.

@@ -462,6 +462,111 @@ async def run():
                     "PASS scene lifecycle: PostgreSQL CAS, TLS SET/ACK/state, atomic receipt links, real Core process restart, ON/OFF and zero physical devices",
                     flush=True,
                 )
+                # Separate acceptance of an AUTOMATION across real SIGKILL.
+                # The earlier scene test does not by itself prove this path.
+                await relay.send(TopicKind.STATUS, relay.status(True))
+                relay.on = False
+                await relay.state("automation-crash-baseline")
+                async with asyncio.timeout(10):
+                    while (await api.request("GET", "/devices/fixture_relay"))[
+                        "state"
+                    ].get("on") is not False:
+                        await asyncio.sleep(0.1)
+                rule_id = "automation_process_crash"
+                await api.request(
+                    "POST",
+                    "/automations",
+                    {
+                        "id": rule_id,
+                        "name": "Software automation crash",
+                        "house_id": "fixture_house",
+                        "enabled": True,
+                        "trigger": {
+                            "type": "device_state",
+                            "device_id": "fixture_relay",
+                            "field": "on",
+                            "operator": "eq",
+                            "value": True,
+                        },
+                        "conditions": [],
+                        "actions": [
+                            {
+                                "type": "device_state",
+                                "device_id": "fixture_relay",
+                                "state": {"on": on},
+                            }
+                            for on in (False, True)
+                        ],
+                    },
+                )
+                relay.on = True
+                await relay.state("automation-crash-trigger")
+                auto_message = await asyncio.wait_for(mqtt.messages.__anext__(), 10)
+                auto_command = CommandEnvelope.model_validate_json(
+                    bytes(auto_message.payload)
+                )
+                assert auto_command.state == {"on": False} and not auto_message.retain
+                auto_path = f"/automations/{rule_id}/runs"
+                auto_rows = (await http.get(auto_path)).json()
+                assert len(auto_rows) == 1
+                auto_id = auto_rows[0]["id"]
+                assert (
+                    auto_rows[0]["actions"][0]["receipt"]["command_id"]
+                    == auto_command.command_id
+                )
+                process.kill()
+                await asyncio.to_thread(process.wait, timeout=5)
+                await start()
+                async with asyncio.timeout(40):
+                    while True:
+                        response = await http.get(auto_path)
+                        assert response.status_code == 200, response.text
+                        rows = response.json()
+                        assert len(rows) == 1 and rows[0]["id"] == auto_id
+                        if rows[0]["status"] == "unknown":
+                            break
+                        await asyncio.sleep(0.2)
+                assert (
+                    rows[0]["actions"][0]["receipt"]["command_id"]
+                    == auto_command.command_id
+                )
+                assert rows[0]["actions"][1]["receipt"] is None
+                assert rows[0]["actions"][1]["status"] == "skipped"
+                with engine.connect() as connection:
+                    assert (
+                        connection.scalar(
+                            text(
+                                "SELECT count(*) FROM scene_run_receipts WHERE run_id=:id"
+                            ),
+                            {"id": auto_id},
+                        )
+                        == 1
+                    )
+                    assert (
+                        connection.scalar(
+                            text(
+                                "SELECT count(*) FROM scene_runs WHERE source_kind='automation' AND scene_id=:id"
+                            ),
+                            {"id": rule_id},
+                        )
+                        == 1
+                    )
+                    assert (
+                        connection.scalar(text("SELECT count(*) FROM physical_devices"))
+                        == 0
+                    )
+                try:
+                    await asyncio.wait_for(mqtt.messages.__anext__(), 1)
+                except TimeoutError:
+                    pass
+                else:
+                    raise AssertionError(
+                        "Automation replayed or advanced after real process crash"
+                    )
+                print(
+                    "PASS automation actual SIGKILL/restart: first SET without ACK/state, durable unknown, one SQL receipt, zero replay and no second command",
+                    flush=True,
+                )
         await stop()
     finally:
         if process is not None and process.poll() is None:

@@ -123,7 +123,7 @@ def marker_failure_cases(backup, root, web, docker, profiles, *, old_core=None):
         profile._open_pg()
         assert (
             profile.query("SELECT version_num FROM alembic_version")
-            == "0012_server_scene_execution"
+            == "0013_device_automations"
         )
         profile.stop()
     print(
@@ -331,7 +331,7 @@ def main():
         failed_profile._open_pg()
         assert (
             failed_profile.query("SELECT version_num FROM alembic_version")
-            == "0012_server_scene_execution"
+            == "0013_device_automations"
         )
         assert manager.legacy_fingerprints(failed_profile) == original_rows
         failed_profile.stop()
@@ -344,7 +344,7 @@ def main():
         upgraded.pg()
         assert (
             upgraded.query("SELECT version_num FROM alembic_version")
-            == "0012_server_scene_execution"
+            == "0013_device_automations"
         )
         assert manager.legacy_fingerprints(upgraded) == original_rows
         assert (
@@ -451,7 +451,7 @@ def main():
         source.stop()
         assert digest(backup) == backup_files
         print(
-            "PASS upgrade: exact #42 backup, all legacy rows preserved, 0010->0011, scene ON/restart/explicit OFF, per-user/home favorites, restart/new backup restore, original old-checkout rollback"
+            f"PASS upgrade: exact #42 backup, all legacy rows preserved, {manager.SOURCE_MIGRATION}->{manager.EXPECTED_MIGRATION}, scene ON/restart/explicit OFF, per-user/home favorites, restart/new backup restore, original old-checkout rollback"
         )
         print(
             "PASS upgrade refusal: active backup, pins, missing identity, corrupt manifest, symlink, existing target, ordinary cross-version restore, wrong revision, partial restore unstartable"

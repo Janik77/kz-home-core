@@ -219,10 +219,12 @@ def test_scene_execution_and_shortcuts(seeded_client: TestClient) -> None:
     )
 
 
-def test_automation_trigger_and_websocket(seeded_client: TestClient) -> None:
+def test_demo_state_event_does_not_execute_legacy_automation(
+    seeded_client: TestClient,
+) -> None:
+    # HTTP/demo mutations are not fresh authenticated MQTT reports.
     with seeded_client.websocket_connect(
-        "/ws",
-        headers={"Authorization": f"Bearer {seeded_client.auth_access_token}"},  # type: ignore[attr-defined]
+        "/ws", headers={"Authorization": f"Bearer {seeded_client.auth_access_token}"}
     ) as websocket:
         assert (
             seeded_client.patch(
@@ -230,22 +232,13 @@ def test_automation_trigger_and_websocket(seeded_client: TestClient) -> None:
             ).status_code
             == 200
         )
-        events = [websocket.receive_json() for _ in range(4)]
-        assert any(
-            event["type"] == "device_state_changed"
-            and event["device_id"] == "living_room_light"
-            for event in events
-        )
-        assert any(
-            event["type"] == "automation_triggered"
-            and event["automation_id"] == "hall_motion_light"
-            for event in events
-        )
-        assert any(event["type"] == "automation_completed" for event in events)
-        assert (
-            seeded_client.get("/devices/living_room_light").json()["state"]["on"]
-            is True
-        )
+        event = websocket.receive_json()
+        assert event["type"] == "device_state_changed"
+        assert event["device_id"] == "hall_motion"
+    assert (
+        seeded_client.get("/devices/living_room_light").json()["state"]["on"] is False
+    )
+    assert seeded_client.get("/automations/hall_motion_light/runs").json() == []
 
 
 def test_seed_is_idempotent(db_settings: Settings) -> None:
@@ -320,13 +313,15 @@ def test_disabled_automation_and_manual_run(seeded_client: TestClient) -> None:
         seeded_client.get("/devices/living_room_light").json()["state"]["on"] is False
     )
 
-    assert seeded_client.post("/automations/manual/run").status_code == 200
-    assert seeded_client.get("/devices/living_room_light").json()["state"]["on"] is True
+    assert seeded_client.post("/automations/manual/run").status_code == 409
+    assert (
+        seeded_client.get("/devices/living_room_light").json()["state"]["on"] is False
+    )
     assert seeded_client.post("/automations/manual/enable").json()["enabled"] is True
     assert seeded_client.post("/automations/manual/disable").json()["enabled"] is False
 
 
-def test_delay_action_is_background_and_event_log_is_written(
+def test_unsupported_delay_is_preserved_but_fails_closed(
     seeded_client: TestClient,
 ) -> None:
     payload = automation_payload(
@@ -341,27 +336,15 @@ def test_delay_action_is_background_and_event_log_is_written(
         ],
     )
     assert seeded_client.post("/automations", json=payload).status_code == 201
-    seeded_client.post("/devices/living_room_light/on")
-    with seeded_client.websocket_connect(
-        "/ws",
-        headers={"Authorization": f"Bearer {seeded_client.auth_access_token}"},  # type: ignore[attr-defined]
-    ) as websocket:
-        seeded_client.patch("/devices/hall_motion/state", json={"motion": True})
-        while True:
-            event = websocket.receive_json()
-            if (
-                event["type"] == "automation_completed"
-                and event.get("automation_id") == "delayed_off"
-            ):
-                break
+    # Preserve legacy definitions for editing, but never execute unsupported delay actions.
+    dry = seeded_client.post("/automations/delayed_off/dry-run")
+    assert dry.status_code == 200
+    assert not dry.json()["eligible"]
+    assert "unsupported_definition" in dry.json()["issues"]
+    assert seeded_client.post("/automations/delayed_off/run").status_code == 409
     assert (
         seeded_client.get("/devices/living_room_light").json()["state"]["on"] is False
     )
-    logs = seeded_client.get(
-        "/events", params={"event_type": "automation_completed", "limit": 500}
-    ).json()
-    assert any(item["entity_id"] == "delayed_off" for item in logs)
-    assert all(item["correlation_id"] for item in logs)
 
 
 def test_comparison_and_time_conditions() -> None:
@@ -411,14 +394,13 @@ def test_multiple_conditions_are_and_and_cross_house_is_rejected(
     )
     seeded_client.patch("/devices/hall_motion/state", json={"motion": False})
     seeded_client.patch("/devices/living_room_curtain/state", json={"position": 30})
-    with seeded_client.websocket_connect(
-        "/ws",
-        headers={"Authorization": f"Bearer {seeded_client.auth_access_token}"},  # type: ignore[attr-defined]
-    ) as websocket:
-        seeded_client.patch("/devices/hall_motion/state", json={"motion": True})
-        while websocket.receive_json()["type"] != "automation_completed":
-            pass
-    assert seeded_client.get("/devices/living_room_light").json()["state"]["on"] is True
+    seeded_client.patch("/devices/hall_motion/state", json={"motion": True})
+    dry = seeded_client.post("/automations/and_rule/dry-run").json()
+    assert not dry["eligible"]
+    assert "unsupported_definition" in dry["issues"]
+    assert (
+        seeded_client.get("/devices/living_room_light").json()["state"]["on"] is False
+    )
 
     seeded_client.post("/houses", json={"id": "other", "name": "Other"})
     seeded_client.post(
@@ -491,23 +473,11 @@ def test_automation_failure_does_not_stop_other_rules(
     )
     seeded_client.delete("/devices/temporary_light")
 
-    seen: set[tuple[str, str]] = set()
-    with seeded_client.websocket_connect(
-        "/ws",
-        headers={"Authorization": f"Bearer {seeded_client.auth_access_token}"},  # type: ignore[attr-defined]
-    ) as websocket:
-        seeded_client.patch("/devices/hall_motion/state", json={"motion": True})
-        while {
-            ("automation_failed", "will_fail"),
-            ("automation_completed", "still_runs"),
-        } - seen:
-            event = websocket.receive_json()
-            automation_id = event.get("automation_id")
-            if automation_id:
-                seen.add((event["type"], automation_id))
-
-    assert ("automation_failed", "will_fail") in seen
-    assert ("automation_completed", "still_runs") in seen
+    for entity_id in ("will_fail", "still_runs"):
+        result = seeded_client.post(f"/automations/{entity_id}/dry-run")
+        assert result.status_code == 200
+        assert result.json()["eligible"] is False
+        assert seeded_client.get(f"/automations/{entity_id}/runs").json() == []
 
 
 def test_loop_protection_ignores_events_at_max_depth(db_settings: Settings) -> None:

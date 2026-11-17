@@ -8,6 +8,8 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     Integer,
+    Index,
+    text,
     String,
     UniqueConstraint,
 )
@@ -18,6 +20,15 @@ from app.db.base import Base
 class SceneRunORM(Base):
     __tablename__ = "scene_runs"
     __table_args__ = (
+        Index(
+            "uq_automation_event",
+            "source_kind",
+            "scene_id",
+            "idempotency_hash",
+            unique=True,
+            postgresql_where=text("source_kind = 'automation'"),
+            sqlite_where=text("source_kind = 'automation'"),
+        ),
         UniqueConstraint(
             "house_id", "requested_by", "idempotency_hash", name="uq_scene_run_key"
         ),
@@ -29,6 +40,9 @@ class SceneRunORM(Base):
     )
     idempotency_hash: Mapped[str] = mapped_column(String(64))
     # Keep the snapshot even if its definition is subsequently deleted.
+    source_kind: Mapped[str] = mapped_column(
+        String(16), default="scene", server_default="scene"
+    )
     scene_id: Mapped[str] = mapped_column(String(64))
     scene_revision: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
