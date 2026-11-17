@@ -1,23 +1,26 @@
-# Integrated favorites software stack
+# KZ Home: программная интеграция автоматизаций
 
-The supported new combination is Core #43
-`5b87f4b71a7a2a99d4dd3d288c7f1ec76ab781f2`, migration
-`0011_device_favorites`, and unmodified Web #25
-`d6533042b950ded2f8b90dbec1af5a05fd078ce0`.
-The source Core tooling's intermediate pin 27b20c7 is replaced with the actual final
-reviewed Core source; runtime files are unchanged. Web #25 independent review is complete.
+Точный acceptance candidate: Core tooling `617c1efb96a3e6422ac3abefd7440ef5382fed20`
+(draft #49 поверх #47), runtime `f6a0826929c87b39dec7e81d22280f1218bf18f1`,
+Web `1e18ec20afc444b07d14e409fd733ba2ed9f0f95` (#27), schema `0013_device_automations`.
+Документальные follow-up commits не заменяют runtime pin.
 
-Use [SOFTWARE_UPGRADE.md](SOFTWARE_UPGRADE.md) as the single setup/run/stop guide.
-It separates a NEW profile from the narrowly supported #42 -> #43 upgrade and
-rollback. Do not use earlier launch instructions or manually alter identity fields.
+Одна актуальная инструкция: [SOFTWARE_UPGRADE.md](SOFTWARE_UPGRADE.md).
+Она начинается с проверки существующих свободных checkout, не требует повторного
+клонирования и создаёт отдельный новый persistent профиль. Старый проблемный профиль
+не используется. `start` работает foreground; штатный stop — Ctrl-C в его терминале,
+затем снова start с тем же state. Supervisor/автозапуск не проверены и не включены.
 
-For disposable smoke after setup:
-```bash
-.venv-new/bin/python -B core-new/tools/run_software_stack.py --web-root web-new --smoke-test
-```
+Ordinary restore строго exact-version, только в новый профиль. Межверсионный upgrade
+поддерживает только указанный в инструкции backup #42/Web20/schema0010, а не0011/0012
+или произвольную старую установку. Не менять служебные привязки вручную.
 
-This smoke mode deletes its own temporary data. Persistent profiles retain data on
-Ctrl-C. CI verifies the exact integration head (recorded in the draft PR), Core
-regressions, actual PostgreSQL/MQTT TLS scenes, persistent restart/backup/restore,
-supported upgrade/rollback, and pinned Web unit/demo/contract/live tests. Main and
-source branches remain untouched. No merge/deploy or physical qualification.
+Проверенные на Core617c CI: Core regression, PostgreSQL migrations/concurrency,
+MosquittoTLS, persistent lifecycle и узкий backup/upgrade/restore. Совместная browser
+приёмка с automation SIGKILL прошла: run `44115292304`, включая unknown и отсутствие
+replay после реального SIGKILL. Test/docs follow-up добавляет отдельные backup/restore
+assertions для automation history; их результат должен быть подтверждён новым CI. ПК владельца и физические ESP32/реле
+не испытаны этой интеграцией. Main/production не объединены/не изменены.
+
+Исполняемый scope и ошибки: [AUTOMATIONS_SOFTWARE_SLICE.md](AUTOMATIONS_SOFTWARE_SLICE.md).
+Исторические инструкции #43/Web25/schema0011 не являются инструкцией текущей версии.
