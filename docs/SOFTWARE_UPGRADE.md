@@ -1,8 +1,8 @@
 # KZ Home: отдельный программный стенд автоматизаций
 
-Версии-кандидаты: Core `617c1efb96a3e6422ac3abefd7440ef5382fed20`, Web `1e18ec20afc444b07d14e409fd733ba2ed9f0f95`.
+Версия-кандидат: Core integration branch `integration/web28-persistent` поверх #49 (runtime неизменён), Web `6f8f72f86f668b53f85c13054644c80427fe9eab`.
 
-**Статус:** пара Core617c/Web1e18 прошла все четыре Core workflows, включая совместный browser/реальный PostgreSQL/MQTTTLS и actual automation SIGKILL. Дополнительная проверка сохранения именно automation run/receipt при backup/restore добавлена в test-only follow-up; её новый CI нужно подтвердить отдельно. На ПК владельца эта версия пока не установлена: компьютер был недоступен. Проверки GitHub не подтверждают состояние локальных папок или Docker владельца.
+**Статус:** отдельный кандидат с Web #28. Результаты прежней пары Core f4/Web #27 не заменяют CI этой пары: перед установкой проверить все четыре workflows на точном integration SHA из отчёта/PR. Профиль владельца не изменён. Проверки GitHub не подтверждают состояние локальных папок или Docker владельца.
 
 ## 1. Сначала только проверка существующих папок
 
@@ -41,10 +41,10 @@ docker info --format '{{.ServerVersion}}'
 
 ```bash
 set -euo pipefail
-CORE_SHA=617c1efb96a3e6422ac3abefd7440ef5382fed20
-WEB_SHA=1e18ec20afc444b07d14e409fd733ba2ed9f0f95
-git -C "$CORE" fetch origin feature/durable-device-automations
-git -C "$WEB" fetch origin feature/complete-automation-workspace
+: "${CORE_SHA:?Укажите точный integration SHA из принятого отчёта с зелёными CI, не старый f4/617c}"
+WEB_SHA=6f8f72f86f668b53f85c13054644c80427fe9eab
+git -C "$CORE" fetch origin integration/web28-persistent
+git -C "$WEB" fetch origin feature/visible-live-device-state
 git -C "$CORE" cat-file -e "$CORE_SHA^{commit}" && git -C "$WEB" cat-file -e "$WEB_SHA^{commit}"
 git -C "$CORE" switch --detach "$CORE_SHA"
 git -C "$WEB" switch --detach "$WEB_SHA"
@@ -55,7 +55,7 @@ test "$(git -C "$WEB" rev-parse HEAD)" = "$WEB_SHA"
 Создать отдельное окружение только для стенда, не заменяя прежнее:
 
 ```bash
-VENV="$HOME/.local/share/kzhome-software/venv-automation-pilot"
+VENV="$HOME/.local/share/kzhome-software/venv-web28-pilot"
 test ! -e "$VENV" || { echo 'Окружение уже существует: сначала проверить его назначение, не перезаписывать.'; exit 1; }
 python3.12 -m venv "$VENV"
 "$VENV/bin/python" -m pip install -r "$CORE/requirements-dev.txt"
@@ -68,7 +68,7 @@ npm --prefix "$WEB" ci
 Это новая изолированная программная лаборатория, не восстановление старого тестового дома. Старый `acknowledgement-profile` и его служебные привязки оставить как есть. Не редактировать `profile.json`, inode/device identity, hashes, pins или Docker labels вручную.
 
 ```bash
-STATE="$HOME/.local/share/kzhome-software/automation-pilot-v1"
+STATE="$HOME/.local/share/kzhome-software/web28-pilot-v1"
 test ! -e "$STATE" || { echo 'Профиль уже существует: init повторять нельзя.'; exit 1; }
 "$VENV/bin/python" -B "$CORE/tools/durable_software.py" init --state "$STATE"
 "$VENV/bin/python" -B "$CORE/tools/durable_software.py" start --state "$STATE" --web-root "$WEB"
@@ -122,7 +122,7 @@ test ! -e "$RESTORED" || { echo 'Папка восстановления уже 
 - схема `0010_scene_runs`, нулевой физический inventory;
 - полные, неизменённые identity/owner/path/device/inode/database поля и manifest.
 
-Назначение: runtime `f6a0826929c87b39dec7e81d22280f1218bf18f1`, Web `1e18ec20afc444b07d14e409fd733ba2ed9f0f95`, схема `0013_device_automations`; tooling617c. Backup из промежуточных #43/#44/#45/#46/#47, иных Web pins,0011/0012 или произвольных ревизий **не поддержан** этой командой. Не заменять их pins, не править identity и не выдавать ordinary restore за межверсионную миграцию.
+Назначение: runtime `f6a0826929c87b39dec7e81d22280f1218bf18f1`, Web `6f8f72f86f668b53f85c13054644c80427fe9eab`, схема `0013_device_automations`; tooling из integration/web28-persistent. Backup из промежуточных #43/#44/#45/#46/#47, иных Web pins,0011/0012 или произвольных ревизий **не поддержан** этой командой. Не заменять их pins, не править identity и не выдавать ordinary restore за межверсионную миграцию.
 
 Только после отдельного подтверждения исходных checkout/профиля и остановки его foreground launcher можно задать абсолютные `OLD_CORE`, `OLD_WEB`, `OLD_PYTHON`, `OLD_STATE` (исходное положение профиля) и выполнить:
 
@@ -150,4 +150,8 @@ Upgrade проверяет whitelist/checksums, исходную схему и i
 
 Откат — остановить новый launcher и открыть **неизменённый** старый своим старым checkout/окружением; это не downgrade БД. Изменения, сделанные только в новом профиле, назад не копируются. Сохранить обе истории. Не следует заключать, что реальное устройство выключено, только по восстановленной записи или откату.
 
-Доказательство migration/restore: GitHub run `44115292279`, durable `44115292349`, оба для Core617c. Проверены изолированные PostgreSQL/MosquittoTLS и Python-реле, не ПК владельца и не оборудование. Очистка CI относится лишь к собственным временным тестовым ресурсам; CLI не предоставляет prune/delete.
+Acceptance этой версии: workflows `durable-software.yml` и `software-upgrade.yml` на том же точном integration SHA, что выбран выше. Не считать их пройденными до зелёного завершения. Проверены изолированные PostgreSQL/MosquittoTLS и Python-реле, не ПК владельца и не оборудование. Очистка CI относится лишь к собственным временным тестовым ресурсам; CLI не предоставляет prune/delete.
+
+## Ограничение смены Web pin
+
+Новый launcher принимает только Web #28. Профиль прежней пары Web #27 нельзя перепривязать редактированием `profile.json`: он останется доступен только со своим прежним launcher и Web. Межверсионный путь #49/Web27 → Web28 здесь не реализован; не переносить данные вручную. Новый профиль создаётся один раз и сохраняется при последующих stop/start и exact-version backup/restore. Никаких дополнительных копий checkout на ПК эта инструкция не требует.
