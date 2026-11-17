@@ -451,7 +451,7 @@ def main():
         source.stop()
         assert digest(backup) == backup_files
         print(
-            "PASS upgrade: exact #42 backup, all legacy rows preserved, 0010->0011, scene ON/restart/explicit OFF, per-user/home favorites, restart/new backup restore, original old-checkout rollback"
+            f"PASS upgrade: exact #42 backup, all legacy rows preserved, {manager.SOURCE_MIGRATION}->{manager.EXPECTED_MIGRATION}, scene ON/restart/explicit OFF, per-user/home favorites, restart/new backup restore, original old-checkout rollback"
         )
         print(
             "PASS upgrade refusal: active backup, pins, missing identity, corrupt manifest, symlink, existing target, ordinary cross-version restore, wrong revision, partial restore unstartable"

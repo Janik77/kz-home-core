@@ -20,7 +20,7 @@ from uuid import uuid4
 
 CORE = Path(__file__).resolve().parents[1]
 CORE_SHA = "f6a0826929c87b39dec7e81d22280f1218bf18f1"
-WEB_SHA = "075fa4237c98ce1b2c3becbd545e874cb8759a67"
+WEB_SHA = "1e18ec20afc444b07d14e409fd733ba2ed9f0f95"
 PG = "postgres:17-bookworm@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6ef6225b3e5d59c7afb35e994"
 MQTT = "eclipse-mosquitto:2@sha256:75d6662dee52c947dc9dd9c29f1d8d7ffef78ddaf38001caa09755681e8bbc98"
 OPENSSL = "alpine/openssl:latest@sha256:6821afa2476e11be343f29275f2ca24291720ff0a7148bd131fd8e314ff26d9e"
