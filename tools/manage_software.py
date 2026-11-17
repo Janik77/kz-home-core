@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -29,7 +30,7 @@ def unit_name(state):
     return 'kzhome-software-' + hashlib.sha256(str(state).encode()).hexdigest()[:16] + '.service'
 
 
-def unit_text(python, core, web, state):
+def unit_text(python, core, web, state, executable_path='/usr/local/bin:/usr/bin:/bin'):
     command = ' '.join(quote(x) for x in (python, '-B', core / 'tools/durable_software.py'))
     return f'''[Unit]
 Description=KZ Home isolated software profile (manual lifecycle)
@@ -37,6 +38,7 @@ Description=KZ Home isolated software profile (manual lifecycle)
 [Service]
 Type=simple
 WorkingDirectory={quote(core, command=False)}
+Environment={quote('PATH=' + executable_path, command=False)}
 ExecStart={command} start --state {quote(state)} --web-root {quote(web)}
 ExecStopPost={command} stop --state {quote(state)}
 KillSignal=SIGINT
@@ -79,7 +81,15 @@ def manage(action, state, web, python, *, unit_dir=None):
         raise ValueError('Symlink unit directory refused')
     name = unit_name(state)
     path = directory / name
-    expected = unit_text(python, CORE, web, state)
+    # User managers do not inherit an interactive shell's nvm/Node installation.
+    bins = [str(python.parent)]
+    for executable_name in ('node', 'npm', 'docker'):
+        executable = shutil.which(executable_name)
+        if executable is None:
+            raise ValueError('Required executable unavailable: ' + executable_name)
+        bins.append(str(Path(executable).parent))
+    bins.extend(('/usr/local/bin', '/usr/bin', '/bin'))
+    expected = unit_text(python, CORE, web, state, ':'.join(dict.fromkeys(bins)))
     # No enable/linger or daemon startup; an unavailable user manager is a blocker.
     ctl('show-environment', capture=True)
     if action == 'install':

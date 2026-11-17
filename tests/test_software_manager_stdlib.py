@@ -61,7 +61,7 @@ class ManagerTests(unittest.TestCase):
             (root / 'initialized').touch()
             profile = Mock(path=root)
             fake_stack = Mock(validate_web=lambda path: path)
-            with patch.object(manager, 'Profile', return_value=profile), patch.object(manager, 'validate_core'), patch.dict(sys.modules, {'run_software_stack': fake_stack}), patch.object(manager, 'ctl', side_effect=RuntimeError('no bus')):
+            with patch.object(manager.shutil, 'which', side_effect=lambda name: '/usr/bin/' + name), patch.object(manager, 'Profile', return_value=profile), patch.object(manager, 'validate_core'), patch.dict(sys.modules, {'run_software_stack': fake_stack}), patch.object(manager, 'ctl', side_effect=RuntimeError('no bus')):
                 with self.assertRaises(RuntimeError):
                     manager.manage('install', root, root, Path(sys.executable), unit_dir=root / 'units')
             self.assertFalse((root / 'units').exists())
@@ -75,13 +75,13 @@ class ManagerTests(unittest.TestCase):
             python = Path(sys.executable).absolute()
             name = manager.unit_name(root)
             path = units / name
-            path.write_text(manager.unit_text(python, manager.CORE, root, root))
+            path.write_text(manager.unit_text(python, manager.CORE, root, root, str(python.parent) + ':/usr/bin:/usr/local/bin:/bin'))
             path.chmod(0o600)
             profile = Mock(path=root)
             fake_stack = Mock(validate_web=lambda value: value)
             def invoke(*args, **kwargs):
                 return Mock(stdout=str(path) if '--property=FragmentPath' in args else '')
-            with patch.object(manager, 'Profile', return_value=profile), patch.object(manager, 'validate_core'), patch.dict(sys.modules, {'run_software_stack': fake_stack}), patch.object(manager, 'ctl', side_effect=invoke) as ctl:
+            with patch.object(manager.shutil, 'which', side_effect=lambda name: '/usr/bin/' + name), patch.object(manager, 'Profile', return_value=profile), patch.object(manager, 'validate_core'), patch.dict(sys.modules, {'run_software_stack': fake_stack}), patch.object(manager, 'ctl', side_effect=invoke) as ctl:
                 for action in ('start', 'stop', 'restart'):
                     manager.manage(action, root, root, python, unit_dir=units)
                     self.assertEqual(ctl.call_args.args, (action, name))
