@@ -66,8 +66,17 @@ export KZ_STATE="$HOME/.local/share/kzhome-software/daily-new"
 .venv/bin/python core/tools/manage_software.py restart --state "$KZ_STATE" --web-root "$PWD/web"
 ```
 
-Install writes one private user unit; it neither enables nor starts it. Commands
+Install writes one private user unit and an owner-only configuration sidecar; it neither enables nor starts it. Commands
 refuse a modified unit, drop-ins, a different loaded unit, or an invalid profile.
+Stop/status use the saved configuration and profile identity only, not the current
+shell's Node/npm/Docker search path, Web dependencies or runtime-content checks.
+`--web-root` is optional after install. Start/restart still validate the pinned
+runtime, using the saved paths. A changed/missing sidecar, unsafe permissions,
+changed profile binding, or stale loaded systemd configuration remains refused.
+Do not manually repair configuration or use install to overwrite a different
+installation. Stop can terminate the service when dependencies are missing, but
+its cleanup hook still needs the saved Python/Docker installation; check owned
+containers separately after a failed stop hook. No cleanup success is implied.
 The unit uses SIGINT for the foreground launcher and an owned-resource stop hook
 on exit. No automatic restart is configured, deliberately avoiding blind command
 replay. PostgreSQL volume/profile are retained. Startup still runs all existing
