@@ -1,3 +1,19 @@
+## 2026-11-17 automation candidate (draft #49, software only)
+
+- Stacked on #47; shared durable command execution, state freshness, event dedup,
+  cooldown, no chaining, rights checks, dry-run and persisted results.
+- Runtime Core `f6a0826929c87b39dec7e81d22280f1218bf18f1`; compatible Web
+  `075fa4237c98ce1b2c3becbd545e874cb8759a67` (#27). Tooling follow-up has identical
+  app/simulator/alembic runtime and pins this pair.
+- Local clean aggregate: 769 passed, 59 opt-in skipped; independent safety:4passed;
+  durable compatibility tests:11passed. PostgreSQL/TLS/browser CI pending, not
+  physical acceptance. No old profile repair or hardware actions performed.
+- Migration0013 is additive; migrated rules require explicit authorized adoption.
+  See [automation scope and failure semantics](docs/AUTOMATIONS_SOFTWARE_SLICE.md).
+- Next: verify exact final CI pair and artifacts, PostgreSQL concurrency and
+  restart acceptance; only then offer installation. Separate supervisor #48
+  is NOT included in this automation candidate.
+
 # KZ Home — Project Status
 
 Canonical development handoff. This is a repository snapshot, not certification
