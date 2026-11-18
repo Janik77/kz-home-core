@@ -32,6 +32,8 @@ def wait_plan(actions):
             total += seconds
         elif (
             action.get("type", "device_state") != "device_state"
+            or set(action) - {"type", "device_id", "state"}
+            or not isinstance(action.get("state"), dict)
             or set(action.get("state", {})) != {"on"}
             or type(action["state"]["on"]) is not bool
         ):

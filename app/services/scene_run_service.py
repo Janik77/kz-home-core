@@ -468,7 +468,7 @@ class SceneRunService:
             if run.wait_position is not None
             else None
         )
-        if run.durable_plan:
+        if run.durable_plan and status != "unknown":
             if run.cancelled_at is not None:
                 status = "cancelled"
             elif (

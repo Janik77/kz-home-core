@@ -40,6 +40,17 @@ def save(h, run):
               'commands':[c.command_id for c in db.query(DeviceCommandORM).all()]}
     (path/'wait-meta.json').write_text(json.dumps(meta))
     os._exit(17)
+async def successor(h, run):
+    deadline = asyncio.get_running_loop().time() + 12
+    while asyncio.get_running_loop().time() < deadline:
+        view = await read(h, run)
+        if view['actions'][2]['receipt']:
+            result = view['actions'][2]['receipt']
+            due = view['actions'][1]['due_at']
+            assert datetime.fromisoformat(result['created_at']) >= datetime.fromisoformat(due)
+            return result
+        await asyncio.sleep(.05)
+    raise AssertionError(view)
 async def check():
     if phase=='crash':
         async with fixture(path,pytest.MonkeyPatch()) as h:
@@ -59,7 +70,7 @@ async def check():
                 SceneExecutor.start=lost_start
                 await asyncio.sleep(10)
                 raise AssertionError('Resume was not claimed')
-            await wait_action(h,run,2)
+            await successor(h,run)
             assert len(h.wire.published)==2
             save(h,run)
     from app.main import create_app
@@ -74,7 +85,7 @@ async def check():
             h=Harness(api,wire,engine)
             await h.message('status',{'status':'online','last_seen':datetime.now(UTC).isoformat()})
             if point=='parked':
-                second=await wait_action(h,run,2)
+                second=await successor(h,run)
                 assert second['command_id'] not in meta['commands']
                 assert len(wire.published)==1
                 assert datetime.fromisoformat(second['expires_at'])-datetime.fromisoformat(second['created_at']) <= __import__('datetime').timedelta(seconds=30)
@@ -180,3 +191,88 @@ def test_ordinary_scene_wait_does_not_depend_on_house_timezone(tmp_path, monkeyp
             assert len(h.wire.published) == 2
 
     asyncio.run(check())
+
+
+def test_automation_wait_restart_preserves_no_chaining(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    env = {
+        **os.environ,
+        "APP_ENV": "test",
+        "DATABASE_URL": "sqlite:///:memory:",
+        "PYTHONPATH": os.pathsep.join((str(root), str(root / "tests"))),
+    }
+    helper = r"""
+import asyncio,json,os,sys
+from pathlib import Path
+from datetime import UTC,datetime
+import pytest,httpx
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+from app.core import Settings
+from app.models import SceneRunORM
+from app.transports.mqtt_client import FakeMQTTClient
+from test_command_lifecycle import fixture,Harness
+from test_durable_automations import rule,runs
+from test_physical_acceptance import LocalAPI
+path=Path(sys.argv[1]); phase=sys.argv[2]
+async def until(h,a,predicate):
+    for _ in range(150):
+        rows=await runs(h,a)
+        if rows and predicate(rows[0]): return rows[0]
+        await asyncio.sleep(.1)
+    raise AssertionError(rows)
+async def check():
+    if phase=='crash':
+        async with fixture(path,pytest.MonkeyPatch()) as h:
+            a=await rule(h,actions=[{'type':'device_state','device_id':'software_relay','state':{'on':False}}, {'type':'durable_wait','seconds':5}, {'type':'device_state','device_id':'software_relay','state':{'on':True}}])
+            await h.state({'correlation_id':'external-trigger'},True)
+            view=await until(h,a,lambda r:r['actions'][0]['receipt'])
+            receipt=view['actions'][0]['receipt']
+            await h.ack(receipt); await h.state(receipt,False)
+            view=await until(h,a,lambda r:r['status']=='waiting')
+            observer=await rule(h)
+            with Session(h.engine) as db:
+                row=db.get(SceneRunORM,view['id'])
+                assert row.source_kind=='automation'
+                digest=row.idempotency_hash
+            (path/'meta.json').write_text(json.dumps({'a':a,'observer':observer,'run':view,'hash':digest,'receipt':receipt}))
+            os._exit(17)
+    from app.main import create_app
+    m=json.loads((path/'meta.json').read_text())
+    settings=Settings(database_url=f"sqlite:///{path/'physical.db'}",app_env='test',mqtt_enabled=True,mqtt_host='unused',mqtt_client_id='offline-core',mqtt_software_devices=(("fixture_house","software_relay"),))
+    engine=create_engine(settings.database_url); wire=FakeMQTTClient(); app=create_app(settings,run_simulator=False,mqtt_client=wire)
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://test') as client:
+            api=LocalAPI(client); api.token=(await api.request('POST','/auth/login',{'email':'owner@example.test','password':'fixture-human-password'}))['access_token']
+            h=Harness(api,wire,engine)
+            await h.message('status',{'status':'online','last_seen':datetime.now(UTC).isoformat()})
+            # Fresh report from the known predecessor restores freshness, not a new external trigger.
+            await h.state(m['receipt'],False)
+            view=await until(h,m['a'],lambda r:r['actions'][2]['receipt'])
+            receipt=view['actions'][2]['receipt']
+            await h.ack(receipt); await h.state(receipt,True)
+            done=await until(h,m['a'],lambda r:r['status']=='succeeded')
+            await asyncio.sleep(1.5)
+            assert await runs(h,m['observer'])==[]
+            assert len(await runs(h,m['a']))==1
+            assert len(wire.published)==1
+            assert done['id']==m['run']['id'] and done['dispatch_deadline']==m['run']['dispatch_deadline']
+            with Session(engine) as db:
+                row=db.get(SceneRunORM,done['id'])
+                assert row.source_kind=='automation' and row.idempotency_hash==m['hash']
+                assert db.query(SceneRunORM).count()==1
+    engine.dispose()
+asyncio.run(check())
+"""
+    child = tmp_path / "automation_wait_child.py"
+    child.write_text(helper, encoding="utf-8")
+    for phase, expected in [("crash", 17), ("restart", 0)]:
+        result = subprocess.run(
+            [sys.executable, str(child), str(tmp_path), phase],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=35,
+        )
+        assert result.returncode == expected, result.stdout + result.stderr

@@ -1,7 +1,7 @@
 """CI-only real PostgreSQL/TLS wait checkpoints, restart and cancellation."""
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 from uuid import uuid4
 import httpx
@@ -45,9 +45,7 @@ async def acceptance(api, mqtt, relay, engine, stop, start):
             assert receipt["command_id"] == envelope.command_id
             assert datetime.fromisoformat(
                 receipt["expires_at"]
-            ) - datetime.fromisoformat(receipt["created_at"]) <= __import__(
-                "datetime"
-            ).timedelta(seconds=30)
+            ) - datetime.fromisoformat(receipt["created_at"]) <= timedelta(seconds=30)
             await relay.handle(
                 str(message.topic), bytes(message.payload), message.retain
             )
@@ -124,10 +122,73 @@ async def acceptance(api, mqtt, relay, engine, stop, start):
                 done = await status(run, "expired")
                 assert done["actions"][2]["receipt"] is None
             await silent()
+        # Real device report triggers automation; disabling parked plan consumes it.
+        relay.on = False
+        await relay.state("wait-disable-baseline")
+        async with asyncio.timeout(10):
+            while (await api.request("GET", "/devices/fixture_relay"))["state"]["on"]:
+                await asyncio.sleep(0.1)
+        await api.request(
+            "POST",
+            "/automations",
+            dict(
+                id="wait_disable",
+                name="Wait disable",
+                house_id="fixture_house",
+                enabled=True,
+                trigger=dict(
+                    type="device_state",
+                    device_id="fixture_relay",
+                    field="on",
+                    operator="eq",
+                    value=True,
+                ),
+                conditions=[],
+                actions=[
+                    dict(
+                        type="device_state",
+                        device_id="fixture_relay",
+                        state={"on": False},
+                    ),
+                    dict(type="durable_wait", seconds=10),
+                    dict(
+                        type="device_state",
+                        device_id="fixture_relay",
+                        state={"on": True},
+                    ),
+                ],
+            ),
+        )
+        relay.on = True
+        await relay.state("wait-disable-trigger")
+        message = await asyncio.wait_for(mqtt.messages.__anext__(), 10)
+        envelope = CommandEnvelope.model_validate_json(bytes(message.payload))
+        assert envelope.state == {"on": False} and not message.retain
+        await relay.handle(str(message.topic), bytes(message.payload), message.retain)
+        async with asyncio.timeout(10):
+            while True:
+                runs = await api.request("GET", "/automations/wait_disable/runs")
+                if runs and runs[0]["status"] == "waiting":
+                    break
+                await asyncio.sleep(0.1)
+        await api.request(
+            "PATCH",
+            "/automations/wait_disable",
+            {"expected_revision": 1, "enabled": False},
+        )
+        async with asyncio.timeout(10):
+            while True:
+                runs = await api.request("GET", "/automations/wait_disable/runs")
+                if runs and runs[0]["status"] == "cancelled":
+                    break
+                await asyncio.sleep(0.1)
+        assert len(runs) == 1 and runs[0]["actions"][2]["receipt"] is None
+        assert runs[0]["actions"][0]["receipt"]["command_id"] == envelope.command_id
+        await silent(2)
         with engine.connect() as conn:
             assert conn.scalar(text("SELECT count(*) FROM physical_devices")) == 0
-            assert conn.scalar(text("SELECT count(*) FROM scene_run_receipts")) == 4
+            assert conn.scalar(text("SELECT count(*) FROM scene_run_receipts")) == 5
         print(
-            "PASS actual PG/TLS A -> persisted wait -> restart -> B ACK/state; waiting cancellation and real overdue restart emit zero successor; TTL unchanged; software only",
+            "PASS actual PG/TLS A -> persisted wait -> restart -> B ACK/state; waiting cancellation, automation disable and real overdue restart emit zero successor; TTL unchanged; software only",
             flush=True,
         )

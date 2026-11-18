@@ -293,3 +293,59 @@ def test_invalid_wait_patch_is_422_and_preserves_revision(tmp_path, monkeypatch)
             ] == 1
 
     asyncio.run(check())
+
+
+def test_wait_expiry_never_hides_unknown_sent_command(tmp_path, monkeypatch):
+    from app.services.scene_run_service import SceneRunService
+
+    async def check():
+        async with fixture(tmp_path, monkeypatch) as h:
+            response, _, _ = await start(h, actions())
+            run = response.json()
+            await wait_action(h, run, 0)
+            with Session(h.engine) as db:
+                row = db.get(SceneRunORM, run["id"])
+                future = datetime.fromisoformat(run["dispatch_deadline"]) + timedelta(
+                    seconds=1
+                )
+                row.execution_finished = True
+                row.execution_error = "executor_interrupted"
+                db.commit()
+                result = SceneRunService(db, now=lambda: future).get(
+                    "fixture_house", run["id"]
+                )
+                assert result.status == "unknown"
+                assert result.actions[2].receipt is None
+
+    asyncio.run(check())
+
+
+def test_wait_history_blocks_downgrade_even_after_definition_changed(
+    tmp_path, monkeypatch
+):
+    from alembic import command
+    from test_schema import migration_config
+
+    async def check():
+        async with fixture(tmp_path, monkeypatch) as h:
+            response, _, body = await start(h, actions(10))
+            run = response.json()
+            await confirmed_first(h, run)
+            assert (
+                await request(h, "POST", BASE + "/" + run["id"] + "/cancel")
+            ).status_code == 200
+            with Session(h.engine) as db:
+                db.get(SceneORM, body["scene_id"]).actions = [actions()[0]]
+                db.commit()
+            with h.engine.begin() as conn:
+                with pytest.raises(RuntimeError, match="Durable wait history exists"):
+                    command.downgrade(migration_config(conn), "0015_house_schedules")
+
+    asyncio.run(check())
+
+
+def test_explicit_wait_plan_rejects_unknown_relay_constraints():
+    plan = actions()
+    plan[0]["future_constraint"] = True
+    with pytest.raises(ValueError):
+        SceneCreate(id="strict", house_id="h", name="Strict", actions=plan)

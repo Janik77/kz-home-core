@@ -180,6 +180,15 @@ class SceneCreate(BaseModel):
         default_factory=list, max_length=100
     )
 
+    @field_validator("actions", mode="before")
+    @classmethod
+    def strict_wait_plan(cls, actions):
+        if isinstance(actions, list) and all(isinstance(a, dict) for a in actions):
+            from app.services.wait_contract import wait_plan
+
+            wait_plan(actions)
+        return actions
+
     @model_validator(mode="after")
     def durable_plan(self):
         from app.services.wait_contract import wait_plan
@@ -194,10 +203,10 @@ class SceneUpdate(BaseModel):
     house_id: str | None = None
     actions: list[DeviceAction | DurableWaitAction] | None = None
 
-    @field_validator("actions")
+    @field_validator("actions", mode="before")
     @classmethod
     def validate_wait_update(cls, actions):
-        if actions is not None:
+        if isinstance(actions, list) and all(isinstance(a, dict) for a in actions):
             from app.services.wait_contract import wait_plan
 
             wait_plan(actions)
@@ -306,6 +315,15 @@ class AutomationCreate(BaseModel):
         default_factory=list, min_length=1, max_length=100
     )
 
+    @field_validator("actions", mode="before")
+    @classmethod
+    def strict_wait_plan(cls, actions):
+        if isinstance(actions, list) and all(isinstance(a, dict) for a in actions):
+            from app.services.wait_contract import wait_plan
+
+            wait_plan(actions)
+        return actions
+
     @model_validator(mode="after")
     def durable_plan(self):
         from app.services.wait_contract import wait_plan
@@ -351,10 +369,10 @@ class AutomationUpdate(BaseModel):
         default=None, min_length=1, max_length=100
     )
 
-    @field_validator("actions")
+    @field_validator("actions", mode="before")
     @classmethod
     def validate_wait_update(cls, actions):
-        if actions is not None:
+        if isinstance(actions, list) and all(isinstance(a, dict) for a in actions):
             from app.services.wait_contract import wait_plan
 
             wait_plan(actions)
