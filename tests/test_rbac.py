@@ -224,7 +224,7 @@ def test_role_permissions_and_idor(rbac) -> None:
     installer = headers(client, "installer")
     assert (
         client.patch(
-            "/devices/living_room_light", json={"name": "Managed"}, headers=installer
+            "/devices/living_room_light", json={"name": "Managed", "expected_metadata_revision": client.get("/devices/living_room_light", headers=installer).json()["metadata_revision"]}, headers=installer
         ).status_code
         == 200
     )

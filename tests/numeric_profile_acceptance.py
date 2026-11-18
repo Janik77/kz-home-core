@@ -87,7 +87,8 @@ def main():
             result = http.patch(
                 "/core-api/devices/fixture_relay",
                 json={
-                    "capabilities": ["on_off", "illuminance", "temperature", "humidity"]
+                    "capabilities": ["on_off", "illuminance", "temperature", "humidity"],
+                    "expected_metadata_revision": http.get("/core-api/devices/fixture_relay").json()["metadata_revision"]
                 },
             )
             assert result.status_code == 200

@@ -263,6 +263,46 @@ def build_router(
         require(session, user, entity_id, Permission.HOUSE_READ)
         return structure(session, "house").get(entity_id)
 
+    def lock_metadata_scope(session, user, kind, entity_id, target_kind=None, target_id=None, permission=None):
+        """Hold the existing structural lock domain through authorization and CAS.
+
+        Parent moves share these house locks. Re-read ancestry after waiting so a
+        target moved to an unauthorized house cannot slip through an old check.
+        """
+        from sqlalchemy import select
+        from app.models import HouseMembershipORM
+        from app.core.errors import ConflictError
+
+        source = house_for(session, kind, entity_id)
+        target = house_for(session, target_kind, target_id) if target_id is not None else source
+        physical = PhysicalDeviceRepository(session)
+        physical.lock_houses(sorted({source, target}))
+        session.expire_all()
+        if house_for(session, kind, entity_id) != source or (
+            target_id is not None
+            and house_for(session, target_kind, target_id) != target
+        ):
+            raise ConflictError("Location changed concurrently; reload before saving")
+        current_user = session.scalar(
+            select(UserORM).where(UserORM.id == user.id).with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if current_user is None or not current_user.is_active:
+            raise HTTPException(401, "Inactive account", headers={"WWW-Authenticate": "Bearer"})
+        # Membership updates/deletes acquire row locks; retain them until commit.
+        list(session.scalars(
+            select(HouseMembershipORM)
+            .where(HouseMembershipORM.user_id == user.id,
+                   HouseMembershipORM.house_id.in_(sorted({source, target})))
+            .order_by(HouseMembershipORM.house_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ))
+        permission = permission or (Permission.DEVICE_MANAGE if kind == "device" else Permission.HOUSE_MANAGE)
+        require(session, user, source, permission)
+        if target != source:
+            require(session, user, target, permission)
+
     @router.patch("/houses/{entity_id}", response_model=HouseRead)
     def update_house(
         entity_id: str,
@@ -270,6 +310,7 @@ def build_router(
         session: Session = Depends(get_session),
         user: UserORM = Depends(get_current_user),
     ):
+        lock_metadata_scope(session, user, "house", entity_id)
         require(session, user, entity_id, Permission.HOUSE_MANAGE)
         return structure(session, "house").update(entity_id, data)
 
@@ -292,6 +333,7 @@ def build_router(
         session: Session = Depends(get_session),
         user: UserORM = Depends(get_current_user),
     ):
+        lock_metadata_scope(session, user, "house", data.house_id, permission=Permission.HOUSE_MANAGE)
         require(session, user, data.house_id, Permission.HOUSE_MANAGE)
         return structure(session, "floor").create(data)
 
@@ -322,6 +364,7 @@ def build_router(
         session: Session = Depends(get_session),
         user: UserORM = Depends(get_current_user),
     ):
+        lock_metadata_scope(session, user, "floor", entity_id, "house", data.house_id)
         require(
             session,
             user,
@@ -353,6 +396,7 @@ def build_router(
         session: Session = Depends(get_session),
         user: UserORM = Depends(get_current_user),
     ):
+        lock_metadata_scope(session, user, "floor", data.floor_id, permission=Permission.HOUSE_MANAGE)
         require(
             session,
             user,
@@ -388,6 +432,7 @@ def build_router(
         session: Session = Depends(get_session),
         user: UserORM = Depends(get_current_user),
     ):
+        lock_metadata_scope(session, user, "room", entity_id, "floor", data.floor_id)
         require(
             session,
             user,
@@ -424,6 +469,7 @@ def build_router(
         session: Session = Depends(get_session),
         user: UserORM = Depends(get_current_user),
     ):
+        lock_metadata_scope(session, user, "room", data.room_id, permission=Permission.DEVICE_MANAGE)
         require(
             session,
             user,
@@ -475,6 +521,7 @@ def build_router(
         session: Session = Depends(get_session),
         user: UserORM = Depends(get_current_user),
     ):
+        lock_metadata_scope(session, user, "device", entity_id, "room", data.room_id)
         require(
             session,
             user,

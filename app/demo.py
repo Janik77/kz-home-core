@@ -47,9 +47,9 @@ def bootstrap_demo(engine, email, password):
             bus = EventBus()
             service = DeviceService(devices, rooms, bus)
             if houses.get("e2e_house").name == "E2E acceptance":
-                houses.update("e2e_house", {"name": "DEMO · виртуальный дом"})
+                houses.update("e2e_house", {"name": "DEMO · виртуальный дом", "expected_metadata_revision": houses.get("e2e_house").metadata_revision})
             if rooms.get("e2e_room").name == "E2E room":
-                rooms.update("e2e_room", {"name": "SIM · гостиная"})
+                rooms.update("e2e_room", {"name": "SIM · гостиная", "expected_metadata_revision": rooms.get("e2e_room").metadata_revision})
             if not rooms.exists("demo_room"):
                 rooms.create(
                     RoomCreate(
@@ -62,7 +62,7 @@ def bootstrap_demo(engine, email, password):
             if relay.name == "E2E relay" and not relay.metadata_:
                 service.update(
                     "e2e_relay",
-                    DeviceUpdate(name="SIM · реле", metadata={"simulated": True}),
+                    DeviceUpdate(name="SIM · реле", metadata={"simulated": True}, expected_metadata_revision=relay.metadata_revision),
                 )
             definitions = [
                 motion_definition(),
