@@ -13,7 +13,7 @@ import sys
 from uuid import uuid4
 
 CORE = Path(__file__).resolve().parents[1]
-WEB_SHA = "2ccf4172579563ad5e6cb1b0f4dba4147aada558"
+WEB_SHA = "31dd1029173af6c7ff4ed4e9bf0c80679c185b3b"
 
 
 def validate_web(root):

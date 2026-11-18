@@ -163,3 +163,33 @@ def invalidate_restored_waits(connection, *, expected_before=None):
         "before": fingerprints,
         "after": after,
     }
+
+
+def verified_metadata_migration(connection, old_tables, old_rows):
+    """0016→0017 permits only four appended counters and the Alembic version.
+
+    Call inside the migration transaction, after comparing the complete source
+    manifest and before any clone-intent cancellation. Return the computed
+    expected baseline, never bless an independently recaptured mutable snapshot.
+    """
+    tables, _, actual = database_snapshot(connection)
+    if set(tables) != set(old_tables):
+        raise ValueError("Metadata migration changed the table inventory")
+    expected = {}
+    for name, old_table in old_tables.items():
+        columns = list(old_table.c.keys())
+        rows = [dict(row) for row in old_rows[name]]
+        if name in {"houses", "floors", "rooms", "devices"}:
+            columns.append("metadata_revision")
+            for row in rows:
+                row["metadata_revision"] = 1
+        elif name == "alembic_version":
+            if rows != [{"version_num": "0016_durable_waits"}]:
+                raise ValueError("Unexpected source metadata migration version")
+            rows = [{"version_num": "0017_metadata_cas"}]
+        if list(tables[name].c.keys()) != columns:
+            raise ValueError("Metadata migration changed unexpected columns")
+        expected[name] = table_fingerprint(columns, rows)
+    if actual != expected:
+        raise ValueError("Metadata migration changed existing rows or counter defaults")
+    return expected

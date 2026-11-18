@@ -341,6 +341,7 @@ def main():
                 "0013_device_automations",
                 "0014_numeric_thresholds",
                 "0015_house_schedules",
+                "0016_durable_waits",
             }:
                 assert (
                     http.put(
@@ -374,9 +375,13 @@ def main():
                 )
                 assert kept.status_code == 201
 
-            if source_migration in {"0014_numeric_thresholds", "0015_house_schedules"}:
+            if source_migration in {
+                "0014_numeric_thresholds",
+                "0015_house_schedules",
+                "0016_durable_waits",
+            }:
                 numeric_stamps = seed_numeric_source(http, source)
-            if source_migration == "0015_house_schedules":
+            if source_migration in {"0015_house_schedules", "0016_durable_waits"}:
                 seed_schedule_source(http, source)
 
             cli(

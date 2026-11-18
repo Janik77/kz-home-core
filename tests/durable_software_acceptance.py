@@ -215,7 +215,12 @@ def main():
             assert http.get("/").status_code == 200
             response = http.patch(
                 "/core-api/houses/fixture_house",
-                json={"name": "Persistent house settings", "expected_metadata_revision": http.get("/core-api/houses/fixture_house").json()["metadata_revision"]},
+                json={
+                    "name": "Persistent house settings",
+                    "expected_metadata_revision": http.get(
+                        "/core-api/houses/fixture_house"
+                    ).json()["metadata_revision"],
+                },
             )
             assert response.status_code == 200
             response = http.post(
@@ -227,6 +232,44 @@ def main():
                 },
             )
             assert response.status_code == 201
+            metadata_expected = {}
+            for metadata_path, patch in (
+                ("/houses/fixture_house", {"name": "Persistent house settings"}),
+                ("/floors/fixture_floor", {"name": "Persistent floor"}),
+                ("/rooms/saved_room", {"name": "Persistent room"}),
+                (
+                    "/devices/fixture_relay",
+                    {"name": "Persistent relay", "room_id": "saved_room"},
+                ),
+            ):
+                original = http.get("/core-api" + metadata_path).json()
+                saved = http.patch(
+                    "/core-api" + metadata_path,
+                    json={
+                        **patch,
+                        "expected_metadata_revision": original["metadata_revision"],
+                    },
+                )
+                assert saved.status_code == 200, saved.text
+                assert (
+                    saved.json()["metadata_revision"]
+                    == original["metadata_revision"] + 1
+                )
+                metadata_expected[metadata_path] = {
+                    key: value
+                    for key, value in saved.json().items()
+                    if key
+                    in {
+                        "name",
+                        "house_id",
+                        "floor_id",
+                        "room_id",
+                        "order",
+                        "icon",
+                        "metadata_revision",
+                    }
+                }
+            assert source.query("SELECT count(*) FROM device_commands") == "0"
             response = http.post(
                 "/core-api/scenes",
                 json={
@@ -477,6 +520,30 @@ def main():
         with httpx.Client(base_url=url, trust_env=False, timeout=5) as http:
             login(http, restored)
             assert snapshot(http) == expected
+            for metadata_path, preserved in metadata_expected.items():
+                actual = http.get("/core-api" + metadata_path).json()
+                assert {key: actual[key] for key in preserved} == preserved
+                stale = http.patch(
+                    "/core-api" + metadata_path,
+                    json={
+                        "name": "must not replace restored data",
+                        "expected_metadata_revision": preserved["metadata_revision"]
+                        - 1,
+                    },
+                )
+                assert (
+                    stale.status_code == 409
+                    and stale.json()["code"] == "metadata_revision_conflict"
+                )
+                assert (
+                    http.patch(
+                        "/core-api" + metadata_path, json={"name": "legacy writer"}
+                    ).status_code
+                    == 422
+                )
+            print(
+                "PASS metadata PG/TLS: all four revisions and names/move preserved; stale/legacy writes refused; zero metadata commands"
+            )
             assert (
                 http.get("/core-api/automations/saved_automation/runs").json()
                 == automation_history
@@ -497,7 +564,13 @@ def main():
             assert read_run(http, run_id) == completed_run
             command(http, False)
             response = http.patch(
-                "/core-api/rooms/saved_room", json={"name": "Restored copy only", "expected_metadata_revision": http.get("/core-api/rooms/saved_room").json()["metadata_revision"]}
+                "/core-api/rooms/saved_room",
+                json={
+                    "name": "Restored copy only",
+                    "expected_metadata_revision": http.get(
+                        "/core-api/rooms/saved_room"
+                    ).json()["metadata_revision"],
+                },
             )
             assert response.status_code == 200
         halt(process)

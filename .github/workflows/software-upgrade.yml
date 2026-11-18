@@ -13,6 +13,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - source: core56
+            core: f2ec065426e72fb60b3e944ca6fd852bdffde48a
+            web: 2ccf4172579563ad5e6cb1b0f4dba4147aada558
           - source: core54
             core: 2142dcd584f990031d0c02ed6b4c9f1a90d14eed
             web: 96c953f40f3a8eff464e2b57b5e7817456569206
@@ -38,7 +41,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: Janik77/kz-home-web
-          ref: 2ccf4172579563ad5e6cb1b0f4dba4147aada558
+          ref: 31dd1029173af6c7ff4ed4e9bf0c80679c185b3b
           path: web
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -76,3 +79,8 @@ jobs:
       - name: Verify private persistence and isolated restore over real HTTP and MQTT TLS
         working-directory: core
         run: '"$RUNNER_TEMP/durable-venv/bin/python" -B tests/upgrade_software_acceptance.py ../web ../core-before ../web-before'
+
+      - name: Source56 parked intent is invalidated only in upgraded copy
+        if: matrix.source == 'core56'
+        working-directory: core
+        run: '"$RUNNER_TEMP/durable-venv/bin/python" -B tests/wait_profile_acceptance.py ../web ../core-before ../web-before'
