@@ -12,7 +12,7 @@ def test_source52_exact_contract_and_schedule_pins():
     )
     assert len(manager.SUPPORTED_UPGRADE_SOURCES) == 3
     assert manager.CORE_SHA == "45b63628829580bc564ff2490af645951926e82e"
-    assert manager.WEB_SHA == "f5508461d00ae9a7c9841330a30c83bd6a8250da"
+    assert manager.WEB_SHA == "96c953f40f3a8eff464e2b57b5e7817456569206"
     assert manager.EXPECTED_MIGRATION == "0015_house_schedules"
 
 
