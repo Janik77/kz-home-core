@@ -119,6 +119,13 @@ class AutomationService:
         expected_house_id: str | None = None,
         authorized_by: str | None = None,
     ) -> AutomationRead:
+        current = self.get(entity_id)
+        if enabled and current.trigger.type == "schedule":
+            self._validate(
+                AutomationCreate.model_validate(
+                    {**current.model_dump(), "enabled": True}
+                )
+            )
         return AutomationRead.model_validate(
             self.repository.update(
                 entity_id,
@@ -151,7 +158,10 @@ class AutomationService:
         self.repository.session.close()
         for rule in rules:
             trigger = rule.trigger
-            if trigger.device_id != event.data["device_id"]:
+            if (
+                trigger.type == "schedule"
+                or trigger.device_id != event.data["device_id"]
+            ):
                 continue
             if not compare(
                 event.data["state"].get(trigger.field), trigger.operator, trigger.value
@@ -226,7 +236,10 @@ class AutomationService:
     def _validate(self, rule: AutomationCreate) -> None:
         if not self.houses.exists(rule.house_id):
             raise InvalidReferenceError("House does not exist")
-        device_ids = [rule.trigger.device_id]
+        scheduled = rule.trigger.type == "schedule"
+        if scheduled and rule.enabled and not self.houses.get(rule.house_id).timezone:
+            raise InvalidReferenceError("House timezone must be explicitly configured")
+        device_ids = [] if scheduled else [rule.trigger.device_id]
         device_ids.extend(
             c.device_id for c in rule.conditions if isinstance(c, DeviceStateCondition)
         )
@@ -237,14 +250,15 @@ class AutomationService:
                 raise InvalidReferenceError(
                     "Automation cannot access a device in another house"
                 )
-        trigger_device = self.devices.get(rule.trigger.device_id)
-        if rule.trigger.type == "numeric_threshold":
-            self.state_validator.validate_report(
+        if not scheduled:
+            trigger_device = self.devices.get(rule.trigger.device_id)
+            if rule.trigger.type == "numeric_threshold":
+                self.state_validator.validate_report(
+                    trigger_device, {rule.trigger.field: rule.trigger.value}
+                )
+            self.state_validator.validate(
                 trigger_device, {rule.trigger.field: rule.trigger.value}
             )
-        self.state_validator.validate(
-            trigger_device, {rule.trigger.field: rule.trigger.value}
-        )
         for condition in rule.conditions:
             if isinstance(condition, DeviceStateCondition):
                 self.state_validator.validate(

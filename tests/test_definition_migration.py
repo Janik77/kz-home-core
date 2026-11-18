@@ -76,6 +76,8 @@ def test_definition_revision_migration_preserves_rows(tmp_path, backend):
                     if name == "automations":
                         assert row.pop("authorized_by") is None
                         assert row.pop("threshold_state") == {}
+                        assert row.pop("schedule_state") == {}
+                        assert row.pop("schedule_effective_after") is None
                     assert row == original
                     column = next(
                         c

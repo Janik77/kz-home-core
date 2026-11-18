@@ -219,11 +219,16 @@ def create_app(
                     except UnavailableError:
                         pass  # Physical recovery stays closed; software MQTT is independent.
             gateway.start()
+        from app.services.schedule_planner import SchedulePlanner
+        planner = SchedulePlanner(session_factory, command_transport, scene_executor)
+        schedule_task = asyncio.create_task(planner.run(), name="kzhome-schedule-ticker")
         try:
             app.state.initialized = True
             yield
         finally:
             app.state.initialized = False
+            schedule_task.cancel()
+            await asyncio.gather(schedule_task, return_exceptions=True)
             await scene_executor.stop()
             if gateway is not None:
                 await gateway.stop()

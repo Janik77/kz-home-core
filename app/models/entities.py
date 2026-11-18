@@ -31,6 +31,16 @@ class TimestampMixin:
 
 
 class HouseORM(TimestampMixin, Base):
+    timezone: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    timezone_revision: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1"
+    )
+    timezone_effective_after: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    schedule_cursor: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     __tablename__ = "houses"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(255))
@@ -158,6 +168,12 @@ class SceneORM(TimestampMixin, Base):
 
 
 class AutomationORM(TimestampMixin, Base):
+    schedule_effective_after: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    schedule_state: Mapped[dict[str, Any]] = mapped_column(
+        JsonType, default=dict, server_default="{}"
+    )
     threshold_state: Mapped[dict[str, Any]] = mapped_column(
         JsonType, default=dict, server_default="{}"
     )

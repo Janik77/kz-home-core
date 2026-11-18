@@ -6,12 +6,12 @@ from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 import pytest
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import MetaData, Table, create_engine, inspect, text
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
 from app.db import Base
-from app.models import DeviceCommandORM, HouseORM
+from app.models import DeviceCommandORM
 from test_command_lifecycle import fixture
 import asyncio
 
@@ -29,7 +29,9 @@ def test_command_migration_matches_models_and_preserves_old_data(tmp_path, upgra
             if upgrade:
                 command.upgrade(config, "0005_device_onboarding")
                 connection.execute(
-                    HouseORM.__table__.insert().values(id="preserve", name="Preserve")
+                    Table("houses", MetaData(), autoload_with=connection)
+                    .insert()
+                    .values(id="preserve", name="Preserve")
                 )
             command.upgrade(config, "head")
             assert (

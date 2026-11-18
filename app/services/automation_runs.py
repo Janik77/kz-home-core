@@ -70,6 +70,13 @@ class AutomationRunService(SceneRunService):
             or rule.house_id != run.house_id
         ):
             raise ConflictError("Automation disabled or definition changed")
+        if run.schedule_timezone_revision is not None:
+            house = self.session.get(HouseORM, run.house_id, populate_existing=True)
+            if (
+                house is None
+                or house.timezone_revision != run.schedule_timezone_revision
+            ):
+                raise ConflictError("Schedule house timezone changed")
         self.validate_rule(rule)
         if not self.conditions_match(rule):
             raise ConflictError("Automation conditions changed")
@@ -118,6 +125,21 @@ class AutomationRunService(SceneRunService):
 
         for i, condition in enumerate(checks):
             kind = condition.get("type", "device_state")
+            if i == 0 and kind == "schedule":
+                from app.schemas import ScheduleTrigger
+
+                try:
+                    ScheduleTrigger.model_validate(condition)
+                except ValueError as error:
+                    raise InvalidReferenceError(
+                        "Unsupported schedule definition"
+                    ) from error
+                house = self.session.get(
+                    HouseORM, rule.house_id, populate_existing=True
+                )
+                if house is None or not house.timezone:
+                    raise InvalidReferenceError("House timezone required")
+                continue
             if kind == ("numeric_threshold" if i == 0 else "numeric_state"):
                 try:
                     (
@@ -198,7 +220,9 @@ class AutomationRunService(SceneRunService):
         ) as error:
             message = str(error).lower()
             code = "preflight_refused"
-            if "offline" in message or "stale" in message:
+            if "house timezone" in message:
+                code = "house_timezone_required"
+            elif "offline" in message or "stale" in message:
                 code = "state_unavailable"
             elif "authorization" in message:
                 code = "authorization_revoked"
@@ -345,7 +369,7 @@ class AutomationRunService(SceneRunService):
         self.session.commit()
         return fire
 
-    async def admit(self, rule_id, event, executor):
+    async def admit(self, rule_id, event, executor, *, occurrence=None):
         rule = self.definition(rule_id)
         house_id, user_id = rule.house_id, rule.authorized_by
         # Serialize admission across processes, including cooldown and disable/edit.
@@ -358,6 +382,12 @@ class AutomationRunService(SceneRunService):
             self.session.rollback()
             return
         user_id = rule.authorized_by
+        if occurrence is not None and rule.trigger.get("type") != "schedule":
+            self.session.rollback()
+            return
+        if occurrence is None and rule.trigger.get("type") == "schedule":
+            self.session.rollback()
+            return
         if rule.trigger.get("type") == "numeric_threshold":
             consumed_revision = rule.revision
             if not self.consume_threshold(rule, event):
@@ -376,18 +406,46 @@ class AutomationRunService(SceneRunService):
             ):
                 self.session.rollback()
                 return
-        key = (
-            "automation_"
-            + sha256(
-                (
-                    rule.id
-                    + ":"
-                    + event.correlation_id
-                    + ":"
-                    + str(event.data.get("device_id"))
-                ).encode()
-            ).hexdigest()
-        )
+        if occurrence is not None:
+            from app.services.schedule_planner import consume_occurrence
+
+            consumed_revision = rule.revision
+            timezone_revision = consume_occurrence(self, rule, occurrence)
+            if timezone_revision is None:
+                return
+            self.session.scalar(
+                select(HouseORM).where(HouseORM.id == house_id).with_for_update()
+            )
+            self.lock_definition(rule_id)
+            self.session.refresh(rule)
+            house = self.session.get(HouseORM, house_id, populate_existing=True)
+            if (
+                not rule.enabled
+                or rule.revision != consumed_revision
+                or rule.authorized_by != user_id
+                or house.timezone_revision != timezone_revision
+            ):
+                self.session.rollback()
+                return
+            key = (
+                "schedule_"
+                + sha256(
+                    f"{rule.id}:{consumed_revision}:{timezone_revision}:{occurrence.isoformat()}".encode()
+                ).hexdigest()
+            )
+        else:
+            key = (
+                "automation_"
+                + sha256(
+                    (
+                        rule.id
+                        + ":"
+                        + event.correlation_id
+                        + ":"
+                        + str(event.data.get("device_id"))
+                    ).encode()
+                ).hexdigest()
+            )
         digest = sha256(key.encode("ascii")).hexdigest()
         prior = self.session.scalar(
             select(SceneRunORM).where(
@@ -411,7 +469,7 @@ class AutomationRunService(SceneRunService):
         if latest and self.now() - utc(latest.created_at) < COOLDOWN:
             error = "rate_limited"
         check = await self.dry_run(rule)
-        if not check["issues"]:
+        if not check["issues"] and occurrence is None:
             current = self.fresh_device(
                 rule.trigger["device_id"], house_id, rule.trigger["field"]
             )
@@ -478,4 +536,12 @@ class AutomationRunService(SceneRunService):
             self.session.add(row)
             self.session.commit()
             return
+        if occurrence is not None:
+            row = self.session.get(SceneRunORM, view.id)
+            row.schedule_timezone_revision = timezone_revision
+            # Bound an admitted occurrence; never send a late queued schedule.
+            row.dispatch_deadline = min(
+                utc(row.dispatch_deadline), occurrence + timedelta(seconds=30)
+            )
+            self.session.commit()
         executor.start(house_id, view.id, token)

@@ -1,6 +1,6 @@
 from uuid import uuid4
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -12,6 +12,32 @@ from app.repositories.base import Repository
 class HouseRepository(Repository[HouseORM]):
     def __init__(self, session: Session) -> None:
         super().__init__(session, HouseORM)
+
+    def update(self, entity_id, values):
+        values = dict(values)
+        expected = values.pop("expected_timezone_revision", None)
+        if "timezone" not in values:
+            return super().update(entity_id, values)
+        from app.services.command_clock import command_clock
+        from app.core.errors import DefinitionRevisionConflict
+
+        # Atomic CAS includes a no-op save: all pending old-zone intents expire.
+        values.update(
+            timezone_revision=HouseORM.timezone_revision + 1,
+            timezone_effective_after=command_clock.now(),
+        )
+        row = self.session.scalar(
+            update(HouseORM)
+            .where(HouseORM.id == entity_id, HouseORM.timezone_revision == expected)
+            .values(**values)
+            .returning(HouseORM),
+            execution_options={"populate_existing": True},
+        )
+        if row is None:
+            self.session.rollback()
+            raise DefinitionRevisionConflict()
+        self._commit()
+        return row
 
     def for_ids(self, house_ids: list[str]) -> list[HouseORM]:
         if not house_ids:

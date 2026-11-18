@@ -36,6 +36,8 @@ class CrudService(Generic[ReadT]):
 
     def update(self, entity_id: str, data: BaseModel) -> ReadT:
         values = data.model_dump(exclude_unset=True, exclude_none=True)
+        if self.repository.model.__tablename__ == "houses" and "timezone" in data.model_fields_set:
+            values["timezone"] = data.timezone
         self._validate_parents(values)
         self._guard_binding(entity_id, values)
         return self.read_schema.model_validate(

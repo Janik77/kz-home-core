@@ -55,7 +55,7 @@ def serve(path, port):
     )
 
 
-async def run():
+async def run(*, schedule_only=False):
     import aiomqtt
     import httpx
     from alembic import command
@@ -191,6 +191,10 @@ async def run():
                     "online"
                 ]:
                     await asyncio.sleep(0.1)
+            if schedule_only:
+                from schedule_live_acceptance import acceptance
+                await acceptance(api, mqtt, relay, engine, stop, start)
+                return
             await api.request(
                 "POST",
                 "/scenes",
@@ -584,6 +588,7 @@ async def run():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--schedule-only", action="store_true")
     parser.add_argument("--web-root", type=Path)
     parser.add_argument("--serve", type=Path)
     parser.add_argument("--port", type=int)
@@ -601,7 +606,7 @@ def main():
     spec.loader.exec_module(module)
     before = module.inventory()
     try:
-        asyncio.run(run())
+        asyncio.run(run(schedule_only=args.schedule_only))
     finally:
         assert module.inventory() == before, (
             "Docker inventory changed; do not remove unrelated resources"

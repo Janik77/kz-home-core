@@ -46,7 +46,9 @@ def test_onboarding_migration_preserves_existing_devices_and_matches_models(
             if not fresh:
                 command.upgrade(config, PREVIOUS)
                 connection.execute(
-                    HouseORM.__table__.insert().values(id="house", name="House")
+                    Table("houses", MetaData(), autoload_with=connection)
+                    .insert()
+                    .values(id="house", name="House")
                 )
                 connection.execute(
                     FloorORM.__table__.insert().values(
