@@ -19,13 +19,13 @@ import traceback
 from uuid import uuid4
 
 CORE = Path(__file__).resolve().parents[1]
-CORE_SHA = "f6a0826929c87b39dec7e81d22280f1218bf18f1"
-WEB_SHA = "6f8f72f86f668b53f85c13054644c80427fe9eab"
+CORE_SHA = "1ae52afa22431943064b5e85313f671b073b9458"
+WEB_SHA = "74b7238f10a9e56cbc600f9cac21b29a5c15b46e"
 PG = "postgres:17-bookworm@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6ef6225b3e5d59c7afb35e994"
 MQTT = "eclipse-mosquitto:2@sha256:75d6662dee52c947dc9dd9c29f1d8d7ffef78ddaf38001caa09755681e8bbc98"
 OPENSSL = "alpine/openssl:latest@sha256:6821afa2476e11be343f29275f2ca24291720ff0a7148bd131fd8e314ff26d9e"
 LABEL = "kzhome.durable-software"
-EXPECTED_MIGRATION = "0013_device_automations"
+EXPECTED_MIGRATION = "0014_numeric_thresholds"
 BROKER_FILES = ("ca.crt", "server.crt", "server.key", "passwd", "acl", "mosquitto.conf")
 FILES = (
     "profile.json",
@@ -502,9 +502,29 @@ SOURCE_TOOL_SHA = "82653a849d2b61479de1c3bb4d74e7f388523667"
 SOURCE_RUNTIME_SHA = "f946a07f67f9ccb1e8f62c99860a0842bf3a062b"
 SOURCE_WEB_SHA = "c2c4fa89a0da3652e8e0cca3629300ecfd7e658f"
 SOURCE_MIGRATION = "0010_scene_runs"
+SOURCE50_TOOL_SHA = "c03aa044642e8e09bf61ff51c35a46079d1118f0"
+SUPPORTED_UPGRADE_SOURCES = {
+    SOURCE_TOOL_SHA: (SOURCE_RUNTIME_SHA, SOURCE_WEB_SHA, SOURCE_MIGRATION),
+    SOURCE50_TOOL_SHA: (
+        "f6a0826929c87b39dec7e81d22280f1218bf18f1",
+        "6f8f72f86f668b53f85c13054644c80427fe9eab",
+        "0013_device_automations",
+    ),
+}
 
 
-def legacy_fingerprints(profile):
+def source_contract(path):
+    head = subprocess.check_output(
+        ["git", "-C", str(path), "rev-parse", "HEAD"], text=True
+    ).strip()
+    if head not in SUPPORTED_UPGRADE_SOURCES:
+        raise ValueError("Use an exact supported Core #42 or #50 source checkout")
+    return SUPPORTED_UPGRADE_SOURCES[head]
+
+
+def legacy_fingerprints(profile, source_migration=SOURCE_MIGRATION):
+    if source_migration == "0013_device_automations":
+        return source50_fingerprints(profile)
     tables = profile.query(
         "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename NOT IN ('alembic_version','device_favorites') ORDER BY tablename"
     ).splitlines()
@@ -520,10 +540,32 @@ def legacy_fingerprints(profile):
         }
         source = (
             f'(SELECT {columns[table]} FROM public."{table}")'
-            if table in columns else f'public."{table}"'
+            if table in columns
+            else f'public."{table}"'
         )
         result[table] = profile.query(
             f"""SELECT count(*) || ':' || md5(COALESCE(string_agg(row_to_json(t)::text, E'\\n' ORDER BY row_to_json(t)::text),'')) FROM {source} t"""
+        )
+    return result
+
+
+def source50_fingerprints(profile):
+    # Preserve EVERY pre-0014 column, including authority, receipts and favorites.
+    tables = profile.query(
+        "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename != 'alembic_version' ORDER BY tablename"
+    ).splitlines()
+    result = {}
+    for table in tables:
+        if not re.fullmatch(r"[a-z][a-z0-9_]*", table):
+            raise ValueError("Unexpected source table")
+        columns = profile.query(
+            f"SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='{table}' AND column_name NOT IN ('numeric_observed_at','numeric_watermarks','threshold_state') ORDER BY ordinal_position"
+        ).splitlines()
+        if not columns or any(not re.fullmatch(r"[a-z][a-z0-9_]*", c) for c in columns):
+            raise ValueError("Unexpected source columns")
+        selected = ", ".join('"' + c + '"' for c in columns)
+        result[table] = profile.query(
+            f"SELECT count(*) || ':' || md5(COALESCE(string_agg(row_to_json(t)::text, E'\\n' ORDER BY row_to_json(t)::text),'')) FROM (SELECT {selected} FROM public.\"{table}\") t"
         )
     return result
 
@@ -536,18 +578,18 @@ def validate_source_checkout(path):
     dirty = subprocess.check_output(
         ["git", "-C", str(path), "status", "--porcelain"], text=True
     ).strip()
-    if head != SOURCE_TOOL_SHA or dirty:
-        raise ValueError("Use the exact clean Core #42 source checkout")
+    if head not in SUPPORTED_UPGRADE_SOURCES or dirty:
+        raise ValueError("Use an exact clean supported Core #42 or #50 source checkout")
     return path
 
 
-def migrate_upgrade(profile):
+def migrate_upgrade(profile, source_migration=SOURCE_MIGRATION):
     sys.path.insert(0, str(CORE))
     from alembic import command
     from alembic.config import Config
     from sqlalchemy import create_engine
 
-    before = legacy_fingerprints(profile)
+    before = legacy_fingerprints(profile, source_migration)
     if profile.query("SELECT count(*) FROM physical_devices") != "0":
         raise ValueError("Physical inventory refused")
     engine = create_engine(profile._open_pg())
@@ -559,9 +601,22 @@ def migrate_upgrade(profile):
             command.upgrade(cfg, EXPECTED_MIGRATION)
     finally:
         engine.dispose()
-    if legacy_fingerprints(profile) != before:
+    if legacy_fingerprints(profile, source_migration) != before:
         raise ValueError("Upgrade changed existing data")
-    validate_migrated_metadata(profile)
+    if source_migration == SOURCE_MIGRATION:
+        validate_migrated_metadata(profile)
+    for table, column in (
+        ("devices", "numeric_observed_at"),
+        ("devices", "numeric_watermarks"),
+        ("automations", "threshold_state"),
+    ):
+        if (
+            profile.query(
+                f"SELECT count(*) FROM {table} WHERE {column}::text != '{{}}'"
+            )
+            != "0"
+        ):
+            raise ValueError("Unexpected initialized numeric metadata")
 
 
 def validate_migrated_metadata(profile):
@@ -572,9 +627,19 @@ def validate_migrated_metadata(profile):
         != "0"
     ):
         raise ValueError("Unexpected migrated server execution metadata")
-    if profile.query("SELECT count(*) FROM devices WHERE state_observed_at IS NOT NULL") != "0":
+    if (
+        profile.query(
+            "SELECT count(*) FROM devices WHERE state_observed_at IS NOT NULL"
+        )
+        != "0"
+    ):
         raise ValueError("Unexpected migrated device observation metadata")
-    if profile.query("SELECT count(*) FROM automations WHERE authorized_by IS NOT NULL") != "0":
+    if (
+        profile.query(
+            "SELECT count(*) FROM automations WHERE authorized_by IS NOT NULL"
+        )
+        != "0"
+    ):
         raise ValueError("Unexpected migrated automation authority")
     if profile.query("SELECT count(*) FROM device_favorites") != "0":
         raise ValueError("Unexpected migrated favorites")
@@ -583,14 +648,19 @@ def validate_migrated_metadata(profile):
 def upgrade(source, destination, source_checkout):
     validate_core()
     validate_source_checkout(source_checkout)
-    return _restore(source, destination, upgrading=True)
+    return _restore(
+        source,
+        destination,
+        upgrading=True,
+        source_version=source_contract(source_checkout),
+    )
 
 
 def restore(source, destination):
     return _restore(source, destination, upgrading=False)
 
 
-def _restore(source, destination, *, upgrading):
+def _restore(source, destination, *, upgrading, source_version=None):
     source = Path(source).expanduser().absolute()
     if any(p.is_symlink() for p in (source, *source.parents, source / "manifest.json")):
         raise ValueError("Symlink backup refused")
@@ -607,8 +677,13 @@ def _restore(source, destination, *, upgrading):
         if hashlib.sha256(contents[name]).hexdigest() != manifest["sha256"][name]:
             raise ValueError("Backup checksum mismatch")
     saved = json.loads(contents["profile.json"])
-    expected_core = SOURCE_RUNTIME_SHA if upgrading else CORE_SHA
-    expected_web = SOURCE_WEB_SHA if upgrading else WEB_SHA
+    source_version = source_version or (
+        SOURCE_RUNTIME_SHA,
+        SOURCE_WEB_SHA,
+        SOURCE_MIGRATION,
+    )
+    expected_core = source_version[0] if upgrading else CORE_SHA
+    expected_web = source_version[1] if upgrading else WEB_SHA
     if saved.get("core_sha") != expected_core or saved.get("web_sha") != expected_web:
         raise ValueError("Backup requires another reviewed version")
     if (
@@ -664,10 +739,10 @@ def _restore(source, destination, *, upgrading):
         if upgrading:
             if (
                 profile.query("SELECT version_num FROM alembic_version")
-                != SOURCE_MIGRATION
+                != source_version[2]
             ):
                 raise ValueError("Unsupported source migration")
-            migrate_upgrade(profile)
+            migrate_upgrade(profile, source_migration=source_version[2])
         profile.verify_database()
         private_write(target / "seeded", "1")
     finally:

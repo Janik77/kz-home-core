@@ -123,7 +123,7 @@ def marker_failure_cases(backup, root, web, docker, profiles, *, old_core=None):
         profile._open_pg()
         assert (
             profile.query("SELECT version_num FROM alembic_version")
-            == "0013_device_automations"
+            == manager.EXPECTED_MIGRATION
         )
         profile.stop()
     print(
@@ -135,6 +135,7 @@ def main():
     assert os.environ.get("GITHUB_ACTIONS") == "true"
     web, old_core, old_web = map(lambda p: Path(p).resolve(), sys.argv[1:])
     manager.validate_source_checkout(old_core)
+    source_migration = manager.source_contract(old_core)[2]
     spec = importlib.util.spec_from_file_location(
         "old_profile", old_core / "tools/durable_software.py"
     )
@@ -210,6 +211,39 @@ def main():
             assert created.status_code == 201
             run_id = created.json()["id"]
             first_action = dispatch_scene_action(http, run_id, 0, True)["actions"][0]
+            if source_migration == "0013_device_automations":
+                assert (
+                    http.put(
+                        "/core-api/v1/houses/fixture_house/me/device-favorites/fixture_relay"
+                    ).status_code
+                    == 204
+                )
+                kept = http.post(
+                    "/core-api/automations",
+                    json={
+                        "id": "kept_authority",
+                        "house_id": "fixture_house",
+                        "name": "Preserve authority",
+                        "enabled": False,
+                        "trigger": {
+                            "type": "device_state",
+                            "device_id": "fixture_relay",
+                            "field": "on",
+                            "operator": "eq",
+                            "value": True,
+                        },
+                        "conditions": [],
+                        "actions": [
+                            {
+                                "type": "device_state",
+                                "device_id": "fixture_relay",
+                                "state": {"on": False},
+                            }
+                        ],
+                    },
+                )
+                assert kept.status_code == 201
+
             cli(
                 old_core,
                 "backup",
@@ -227,7 +261,7 @@ def main():
         source.query(
             "INSERT INTO users (id,email,password_hash,is_active,is_superuser) SELECT 'upgrade-other','other@example.test',password_hash,true,false FROM users WHERE email='owner@example.test'"
         )
-        original_rows = manager.legacy_fingerprints(source)
+        original_rows = manager.legacy_fingerprints(source, source_migration)
         source.stop()
         cli(
             old_core, "backup", "--state", source.path, "--destination", root / "backup"
@@ -275,7 +309,12 @@ def main():
         attempt(bad_dump, partial)
         assert not (partial / "initialized").exists()
         cli(manager.CORE, "start", "--state", partial, "--web-root", web, success=False)
-        profiles.append(manager.Profile(partial, docker))
+        if (partial / "profile.json").is_file():
+            profiles.append(manager.Profile(partial, docker))
+        else:
+            raise AssertionError(
+                "Valid-source guard passed but restore did not reach partial target"
+            )
 
         # A genuine archive with wrong source revision is refused before migration.
         source.pg()
@@ -292,7 +331,7 @@ def main():
             "--no-owner",
             "--no-acl",
         ).stdout
-        source.query("UPDATE alembic_version SET version_num='0010_scene_runs'")
+        source.query(f"UPDATE alembic_version SET version_num='{source_migration}'")
         source.stop()
         wrong = variant(backup, root / "wrong-revision", dump=wrong_dump)
         attempt(wrong, root / "wrong-target")
@@ -302,8 +341,8 @@ def main():
         # Simulate failure after the actual additive migration, before initialization.
         original_migrate = manager.migrate_upgrade
 
-        def fail_after_migration(profile):
-            original_migrate(profile)
+        def fail_after_migration(profile, **kwargs):
+            original_migrate(profile, **kwargs)
             raise RuntimeError("Injected test-only post-migration failure")
 
         manager.migrate_upgrade = fail_after_migration
@@ -331,9 +370,12 @@ def main():
         failed_profile._open_pg()
         assert (
             failed_profile.query("SELECT version_num FROM alembic_version")
-            == "0013_device_automations"
+            == manager.EXPECTED_MIGRATION
         )
-        assert manager.legacy_fingerprints(failed_profile) == original_rows
+        assert (
+            manager.legacy_fingerprints(failed_profile, source_migration)
+            == original_rows
+        )
         failed_profile.stop()
 
         marker_failure_cases(backup, root, web, docker, profiles, old_core=old_core)
@@ -344,14 +386,16 @@ def main():
         upgraded.pg()
         assert (
             upgraded.query("SELECT version_num FROM alembic_version")
-            == "0013_device_automations"
+            == manager.EXPECTED_MIGRATION
         )
-        assert manager.legacy_fingerprints(upgraded) == original_rows
+        assert manager.legacy_fingerprints(upgraded, source_migration) == original_rows
         assert (
             upgraded.owner != source.owner
             and upgraded.state["database_identity"] != source.state["database_identity"]
         )
-        assert upgraded.query("SELECT count(*) FROM device_favorites") == "0"
+        assert upgraded.query("SELECT count(*) FROM device_favorites") == (
+            "0" if source_migration == manager.SOURCE_MIGRATION else "1"
+        )
         upgraded.stop()
         assert digest(source.path) == source_files and digest(backup) == backup_files
 
@@ -425,7 +469,7 @@ def main():
         # Original remains byte-for-byte unchanged until an explicit old-runtime restart.
         assert digest(source.path) == source_files and digest(backup) == backup_files
         source.pg()
-        assert manager.legacy_fingerprints(source) == original_rows
+        assert manager.legacy_fingerprints(source, source_migration) == original_rows
         source.stop()
         process, url = launch(source, old_web, old_core)
         with httpx.Client(base_url=url, trust_env=False, timeout=5) as http:
@@ -440,18 +484,15 @@ def main():
         process = None
         source.pg()
         assert (
-            source.query("SELECT version_num FROM alembic_version") == "0010_scene_runs"
+            source.query("SELECT version_num FROM alembic_version") == source_migration
         )
-        assert (
-            source.query(
-                "SELECT count(*) FROM pg_tables WHERE tablename='device_favorites'"
-            )
-            == "0"
-        )
+        assert source.query(
+            "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename='device_favorites'"
+        ) == ("0" if source_migration == manager.SOURCE_MIGRATION else "1")
         source.stop()
         assert digest(backup) == backup_files
         print(
-            f"PASS upgrade: exact #42 backup, all legacy rows preserved, {manager.SOURCE_MIGRATION}->{manager.EXPECTED_MIGRATION}, scene ON/restart/explicit OFF, per-user/home favorites, restart/new backup restore, original old-checkout rollback"
+            f"PASS upgrade: exact supported source backup, all legacy rows preserved, {source_migration}->{manager.EXPECTED_MIGRATION}, scene ON/restart/explicit OFF, per-user/home favorites, restart/new backup restore, original old-checkout rollback"
         )
         print(
             "PASS upgrade refusal: active backup, pins, missing identity, corrupt manifest, symlink, existing target, ordinary cross-version restore, wrong revision, partial restore unstartable"
