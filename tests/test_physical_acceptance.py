@@ -127,7 +127,7 @@ class Wire(FakeMQTTClient):
 
 
 @asynccontextmanager
-async def stack(tmp_path, monkeypatch, *, software=False):
+async def stack(tmp_path, monkeypatch, *, software=False, extra_software_devices=()):
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
     from app.main import create_app
@@ -138,7 +138,10 @@ async def stack(tmp_path, monkeypatch, *, software=False):
         mqtt_enabled=True,
         mqtt_host="unused",
         mqtt_client_id="offline-core",
-        mqtt_software_devices=(("fixture_house", "software_relay"),) if software else (),
+        mqtt_software_devices=(("fixture_house", "software_relay"),)
+        + extra_software_devices
+        if software
+        else (),
     )
     engine = create_engine(settings.database_url)
     migration_config = AlembicConfig("alembic.ini")
@@ -162,11 +165,17 @@ async def stack(tmp_path, monkeypatch, *, software=False):
                 if software:
                     # Separate software identity; do not relabel/delete inventory
                     # to bypass the physical gate in lifecycle regression tests.
-                    await api.request("POST", "/devices", {
-                        "id": "software_relay", "room_id": "fixture_room",
-                        "name": "Software test relay", "type": "relay",
-                        "capabilities": ["on_off"],
-                    })
+                    await api.request(
+                        "POST",
+                        "/devices",
+                        {
+                            "id": "software_relay",
+                            "room_id": "fixture_room",
+                            "name": "Software test relay",
+                            "type": "relay",
+                            "capabilities": ["on_off"],
+                        },
+                    )
 
                 async def publish(topic, payload, **kwargs):
                     await core_wire.inject(topic, payload)
@@ -192,7 +201,9 @@ async def stack(tmp_path, monkeypatch, *, software=False):
         engine.dispose()
 
 
-def test_physical_runner_is_blocked_until_firmware_contract_is_verified(tmp_path, monkeypatch):
+def test_physical_runner_is_blocked_until_firmware_contract_is_verified(
+    tmp_path, monkeypatch
+):
     async def check():
         async with stack(tmp_path, monkeypatch) as (api, wire, relay, config, engine):
             await preflight(config, api, "owner@example.test", "fixture-human-password")

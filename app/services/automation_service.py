@@ -238,6 +238,10 @@ class AutomationService:
                     "Automation cannot access a device in another house"
                 )
         trigger_device = self.devices.get(rule.trigger.device_id)
+        if rule.trigger.type == "numeric_threshold":
+            self.state_validator.validate_report(
+                trigger_device, {rule.trigger.field: rule.trigger.value}
+            )
         self.state_validator.validate(
             trigger_device, {rule.trigger.field: rule.trigger.value}
         )

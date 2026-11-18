@@ -117,8 +117,16 @@ class RoomORM(TimestampMixin, Base):
 
 
 class DeviceORM(TimestampMixin, Base):
+    numeric_observed_at: Mapped[dict[str, Any]] = mapped_column(
+        JsonType, default=dict, server_default="{}"
+    )
+    numeric_watermarks: Mapped[dict[str, Any]] = mapped_column(
+        JsonType, default=dict, server_default="{}"
+    )
     __tablename__ = "devices"
-    state_observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    state_observed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     __table_args__ = (Index("ix_devices_type", "type"),)
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(255))
@@ -138,7 +146,9 @@ class DeviceORM(TimestampMixin, Base):
 class SceneORM(TimestampMixin, Base):
     __tablename__ = "scenes"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    revision: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
     name: Mapped[str] = mapped_column(String(255))
     house_id: Mapped[str] = mapped_column(
         ForeignKey("houses.id", ondelete="CASCADE"), index=True
@@ -148,11 +158,16 @@ class SceneORM(TimestampMixin, Base):
 
 
 class AutomationORM(TimestampMixin, Base):
+    threshold_state: Mapped[dict[str, Any]] = mapped_column(
+        JsonType, default=dict, server_default="{}"
+    )
     __tablename__ = "automations"
     authorized_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     __table_args__ = (Index("ix_automations_house_enabled", "house_id", "enabled"),)
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    revision: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
     name: Mapped[str] = mapped_column(String(255))
     house_id: Mapped[str] = mapped_column(
         ForeignKey("houses.id", ondelete="CASCADE"), index=True

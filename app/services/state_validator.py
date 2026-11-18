@@ -1,3 +1,5 @@
+from app.services.numeric_state import NUMERIC_RANGES, valid_number
+
 from app.core.errors import InvalidReferenceError
 from app.schemas import DeviceRead, DeviceState
 
@@ -59,6 +61,10 @@ class StateValidator:
     @staticmethod
     def _validate_values(state: DeviceState) -> None:
         for field, value in state.items():
+            if field in NUMERIC_RANGES and not valid_number(field, value):
+                raise InvalidReferenceError(
+                    f"Invalid numeric value for state field: {field}"
+                )
             if value is None:
                 raise InvalidReferenceError(f"Invalid value for state field: {field}")
             if field in BOOLEAN_FIELDS and type(value) is not bool:

@@ -90,7 +90,7 @@ class Harness:
 
 
 @asynccontextmanager
-async def fixture(tmp_path, monkeypatch):
+async def fixture(tmp_path, monkeypatch, *, extra_software_devices=()):
     # The reused migration helper uses Alembic fileConfig, which disables existing
     # loggers. Do not leak that test-only side effect into later caplog tests.
     loggers = {
@@ -99,7 +99,12 @@ async def fixture(tmp_path, monkeypatch):
         if isinstance(value, logging.Logger)
     }
     try:
-        async with stack(tmp_path, monkeypatch, software=True) as (api, wire, _, _, engine):
+        async with stack(
+            tmp_path,
+            monkeypatch,
+            software=True,
+            extra_software_devices=extra_software_devices,
+        ) as (api, wire, _, _, engine):
             h = Harness(api, wire, engine)
             await h.message(
                 "status",
