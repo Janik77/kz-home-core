@@ -79,6 +79,23 @@ def main():
                 time.sleep(0.2)
             assert len(rows) == 1 and rows[0]["status"] == "succeeded", rows
             assert rows[0]["actions"][0]["receipt"]["ack_status"] == "applied"
+            # ACK/state makes the API succeeded before the executor finally commits.
+            # Snapshot only after that existing lifecycle has durably finalized,
+            # otherwise shutdown can legitimately change execution_error afterward.
+            finalization_deadline = time.monotonic() + 10
+            while (
+                source.query(
+                    "SELECT execution_finished AND execution_error IS NULL FROM scene_runs WHERE scene_id='schedule_backup_rule'"
+                )
+                != "t"
+            ):
+                assert time.monotonic() < finalization_deadline, (
+                    "Source executor did not finalize"
+                )
+                time.sleep(0.05)
+            rows = http.get("/core-api/automations/schedule_backup_rule/runs").json()
+            assert len(rows) == 1 and rows[0]["status"] == "succeeded", rows
+            assert rows[0]["execution_error"] is None, rows
         halt(process)
         process = None
         source.pg()
@@ -101,10 +118,10 @@ def main():
             login(http, restored)
             time.sleep(3)
             assert restored.query("SELECT count(*) FROM device_commands") == counts
-            assert (
-                http.get("/core-api/automations/schedule_backup_rule/runs").json()
-                == rows
-            )
+            restored_rows = http.get(
+                "/core-api/automations/schedule_backup_rule/runs"
+            ).json()
+            assert restored_rows == rows, {"source": rows, "restored": restored_rows}
         halt(process)
         process = None
         assert digest(source.path) == source_files and digest(backup) == backup_files

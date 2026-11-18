@@ -10,7 +10,7 @@
 |---|---|
 | Core runtime, PR #53 | `45b63628829580bc564ff2490af645951926e82e` |
 | Web, PR #30 | `96c953f40f3a8eff464e2b57b5e7817456569206` |
-| Исполняемый tooling | `2512878dedc722f4073c0991a80b228b5af404e9` |
+| Исполняемый tooling | `baf879533f7591ff88e8052ce8adf64fbc3770b8` |
 | Схема | `0015_house_schedules` |
 
 Tooling содержит проверку равенства runtime-файлов указанному Core SHA.

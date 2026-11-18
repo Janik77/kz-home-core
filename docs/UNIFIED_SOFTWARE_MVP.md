@@ -2,7 +2,7 @@
 
 Кандидат расписаний: Core runtime `45b63628829580bc564ff2490af645951926e82e`,
 Web `96c953f40f3a8eff464e2b57b5e7817456569206`,
-tooling `2512878dedc722f4073c0991a80b228b5af404e9`, schema `0015_house_schedules`.
+tooling `baf879533f7591ff88e8052ce8adf64fbc3770b8`, schema `0015_house_schedules`.
 Новая integration ветка `integration/schedule-web30`, без merge в main.
 
 **Одна актуальная инструкция:** [проверка окружения, backup, новое назначение,
