@@ -19,8 +19,8 @@ import traceback
 from uuid import uuid4
 
 CORE = Path(__file__).resolve().parents[1]
-CORE_SHA = "3ba219e8d6b776ad4024e8b23ea894a43c22eb6d"
-WEB_SHA = "03065357005b48b7ffd69ee879ab45caebd2f55a"
+CORE_SHA = "1ae52afa22431943064b5e85313f671b073b9458"
+WEB_SHA = "cd9592ac0d10f27e2112501e9886ed4bce3fa162"
 PG = "postgres:17-bookworm@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6ef6225b3e5d59c7afb35e994"
 MQTT = "eclipse-mosquitto:2@sha256:75d6662dee52c947dc9dd9c29f1d8d7ffef78ddaf38001caa09755681e8bbc98"
 OPENSSL = "alpine/openssl:latest@sha256:6821afa2476e11be343f29275f2ca24291720ff0a7148bd131fd8e314ff26d9e"

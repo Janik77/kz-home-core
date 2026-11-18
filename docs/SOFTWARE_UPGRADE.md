@@ -3,8 +3,8 @@
 This section supersedes the historical target below. No user profile was migrated
 while developing this branch. Acceptance must be green before using the commands.
 
-Target runtime: `3ba219e8d6b776ad4024e8b23ea894a43c22eb6d` (Core #51).
-Target Web: `03065357005b48b7ffd69ee879ab45caebd2f55a` (Web #29 candidate).
+Target runtime: `1ae52afa22431943064b5e85313f671b073b9458` (Core #51).
+Target Web: `cd9592ac0d10f27e2112501e9886ed4bce3fa162` (Web #29 candidate).
 Target schema: `0014_numeric_thresholds`. Tooling: `integration/numeric-web29`.
 The runtime-root git equality guard remains mandatory. This is a support addition
 in code, never a manual edit to profile.json or database identity.

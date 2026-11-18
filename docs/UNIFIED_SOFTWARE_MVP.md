@@ -1,7 +1,7 @@
 # Numeric integration candidate
 
-Runtime Core #51 `3ba219e8d6b776ad4024e8b23ea894a43c22eb6d`,
-Web #29 candidate `03065357005b48b7ffd69ee879ab45caebd2f55a`,
+Runtime Core #51 `1ae52afa22431943064b5e85313f671b073b9458`,
+Web #29 candidate `cd9592ac0d10f27e2112501e9886ed4bce3fa162`,
 schema `0014_numeric_thresholds`; tooling `integration/numeric-web29`.
 
 Use existing launcher, not a second stack implementation:

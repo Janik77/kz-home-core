@@ -16,7 +16,7 @@ def test_supported_sources_include_unchanged_42_and_explicit_50():
         "6f8f72f86f668b53f85c13054644c80427fe9eab",
         "0013_device_automations",
     )
-    assert manager.CORE_SHA == "3ba219e8d6b776ad4024e8b23ea894a43c22eb6d"
+    assert manager.CORE_SHA == "1ae52afa22431943064b5e85313f671b073b9458"
     assert manager.EXPECTED_MIGRATION == "0014_numeric_thresholds"
 
 
