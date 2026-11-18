@@ -39,6 +39,8 @@ from app.schemas import (
     SceneCreate,
     SceneRead,
     SceneUpdate,
+    DefinitionDuplicate,
+    SceneActivate,
     EventLogRead,
     LoginRequest,
     TokenRequest,
@@ -631,6 +633,7 @@ def build_router(
         session: Session = Depends(get_session),
         user: UserORM = Depends(get_current_user),
     ):
+        lock_metadata_scope(session, user, "scene", entity_id, "house", data.house_id, permission=Permission.SCENE_MANAGE)
         source_house = house_for(session, "scene", entity_id)
         require(
             session,
@@ -641,6 +644,22 @@ def build_router(
         if data.house_id is not None:
             require(session, user, data.house_id, Permission.SCENE_MANAGE)
         return scene_service(session).update(entity_id, data, expected_house_id=source_house)
+
+    @router.post("/scenes/{entity_id}/duplicate", response_model=SceneRead, status_code=201)
+    def duplicate_scene(entity_id: str, data: DefinitionDuplicate, session: Session = Depends(get_session), user: UserORM = Depends(get_current_user)):
+        from app.services.definition_copy import duplicate
+        lock_metadata_scope(session, user, "scene", entity_id, permission=Permission.SCENE_MANAGE)
+        house = house_for(session, "scene", entity_id)
+        require(session, user, house, Permission.SCENE_READ)
+        return duplicate(scene_service(session), entity_id, data, house)
+
+    @router.post("/scenes/{entity_id}/activate", response_model=SceneRead)
+    def activate_scene(entity_id: str, data: SceneActivate, session: Session = Depends(get_session), user: UserORM = Depends(get_current_user)):
+        from app.services.definition_copy import activate
+        lock_metadata_scope(session, user, "scene", entity_id, permission=Permission.SCENE_MANAGE)
+        house = house_for(session, "scene", entity_id)
+        require(session, user, house, Permission.SCENE_READ)
+        return activate(scene_service(session), entity_id, data, house)
 
     @router.delete("/scenes/{entity_id}", status_code=204)
     def delete_scene(
@@ -717,6 +736,14 @@ def build_router(
         if data.house_id is not None:
             require(session, user, data.house_id, Permission.AUTOMATION_MANAGE)
         return automation_service(session).update(entity_id, data, expected_house_id=source_house, authorized_by=user.id)
+
+    @router.post("/automations/{entity_id}/duplicate", response_model=AutomationRead, status_code=201)
+    def duplicate_automation(entity_id: str, data: DefinitionDuplicate, session: Session = Depends(get_session), user: UserORM = Depends(get_current_user)):
+        from app.services.definition_copy import duplicate
+        lock_metadata_scope(session, user, "automation", entity_id, permission=Permission.AUTOMATION_MANAGE)
+        house = house_for(session, "automation", entity_id)
+        require(session, user, house, Permission.AUTOMATION_READ)
+        return duplicate(automation_service(session), entity_id, data, house)
 
     @router.delete("/automations/{entity_id}", status_code=204)
     def delete_automation(

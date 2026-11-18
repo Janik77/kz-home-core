@@ -193,6 +193,13 @@ AutomationAction = DeviceAction | DelayAction | DurableWaitAction
 
 
 class SceneCreate(BaseModel):
+    @model_validator(mode="before")
+    @classmethod
+    def reject_lifecycle_write(cls, value):
+        if cls.__name__ != "SceneRead" and isinstance(value, dict) and "is_draft" in value:
+            raise ValueError("is_draft is managed by duplicate/activate operations")
+        return value
+
     id: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=255)
     house_id: str
@@ -203,7 +210,13 @@ class SceneCreate(BaseModel):
     @field_validator("actions", mode="before")
     @classmethod
     def strict_wait_plan(cls, actions):
+        if cls.__name__ == "SceneRead":
+            return actions
         if isinstance(actions, list) and all(isinstance(a, dict) for a in actions):
+            for action in actions:
+                allowed = {"type", "seconds"} if action.get("type") == "durable_wait" else {"type", "device_id", "state"}
+                if set(action) - allowed:
+                    raise ValueError("Unsupported scene action fields")
             from app.services.wait_contract import wait_plan
 
             wait_plan(actions)
@@ -213,11 +226,19 @@ class SceneCreate(BaseModel):
     def durable_plan(self):
         from app.services.wait_contract import wait_plan
 
-        wait_plan(self.actions)
+        if type(self).__name__ != "SceneRead":
+            wait_plan(self.actions)
         return self
 
 
 class SceneUpdate(BaseModel):
+    @model_validator(mode="before")
+    @classmethod
+    def reject_lifecycle_write(cls, value):
+        if isinstance(value, dict) and "is_draft" in value:
+            raise ValueError("is_draft is managed by duplicate/activate operations")
+        return value
+
     expected_revision: int | None = Field(default=None, ge=1, strict=True)
     name: str | None = Field(default=None, min_length=1, max_length=255)
     house_id: str | None = None
@@ -227,13 +248,39 @@ class SceneUpdate(BaseModel):
     @classmethod
     def validate_wait_update(cls, actions):
         if isinstance(actions, list) and all(isinstance(a, dict) for a in actions):
+            for action in actions:
+                allowed = {"type", "seconds"} if action.get("type") == "durable_wait" else {"type", "device_id", "state"}
+                if set(action) - allowed:
+                    raise ValueError("Unsupported scene action fields")
             from app.services.wait_contract import wait_plan
 
             wait_plan(actions)
         return actions
 
 
+class DefinitionDuplicate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=255)
+    expected_revision: int = Field(ge=1, le=2147483646, strict=True)
+
+
+class SceneActivate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_revision: int = Field(ge=1, le=2147483646, strict=True)
+
+
+class ReadDeviceAction(DeviceAction):
+    model_config = ConfigDict(extra="allow")
+
+
+class ReadUnknownAction(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
 class SceneRead(SceneCreate, ReadSchema):
+    actions: list[ReadDeviceAction | DurableWaitAction | ReadUnknownAction]
+    is_draft: bool
     revision: int = Field(ge=1)
 
 

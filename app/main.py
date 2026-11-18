@@ -285,6 +285,12 @@ def create_app(
             "detail": str(error), "code": "metadata_revision_conflict"
         })
 
+    from app.core.errors import SceneDraftError
+
+    @application.exception_handler(SceneDraftError)
+    async def scene_draft_handler(_, error: SceneDraftError) -> JSONResponse:
+        return JSONResponse(status_code=409, content={"detail": str(error), "code": "scene_draft"})
+
     @application.exception_handler(ConflictError)
     async def conflict_handler(_, error: ConflictError) -> JSONResponse:
         return JSONResponse(status_code=409, content={"detail": str(error)})

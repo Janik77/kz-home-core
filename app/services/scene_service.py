@@ -1,3 +1,5 @@
+from pydantic import ValidationError
+
 from app.core.errors import DefinitionRevisionConflict, InvalidReferenceError
 from app.events import Event, EventBus
 from app.repositories.house_repository import HouseRepository
@@ -37,15 +39,33 @@ class SceneService:
         values = data.model_dump(
             exclude_unset=True, exclude_none=True, exclude={"expected_revision"}
         )
+        from app.services.definition_copy import require_lossless
+
+        raw = self.repository.get(scene_id).actions
         current = self.get(scene_id)
+        require_lossless(raw, [action.model_dump() for action in current.actions])
         if (
             data.expected_revision is not None
             and data.expected_revision != current.revision
         ):
             raise DefinitionRevisionConflict()
-        candidate = SceneCreate.model_validate(
-            {**current.model_dump(exclude={"created_at", "updated_at"}), **values}
-        )
+        try:
+            original = SceneCreate.model_validate(
+                current.model_dump(exclude={"created_at", "updated_at", "is_draft"})
+            )
+            require_lossless(raw, [a.model_dump() for a in original.actions])
+            candidate = SceneCreate.model_validate(
+                {
+                    **current.model_dump(
+                        exclude={"created_at", "updated_at", "is_draft"}
+                    ),
+                    **values,
+                }
+            )
+        except ValidationError as error:
+            raise InvalidReferenceError(
+                "Unsupported scene definition; editing refused"
+            ) from error
         self._validate(candidate)
         return SceneRead.model_validate(
             self.repository.update(
@@ -61,6 +81,22 @@ class SceneService:
 
     async def run(self, scene_id: str) -> SceneRead:
         scene = self.get(scene_id)
+        if scene.is_draft:
+            from app.core.errors import SceneDraftError
+
+            raise SceneDraftError()
+        from app.services.definition_copy import require_lossless
+
+        try:
+            parsed = SceneCreate.model_validate(
+                scene.model_dump(exclude={"created_at", "updated_at", "is_draft"})
+            )
+        except ValidationError as error:
+            raise InvalidReferenceError("Unsupported scene definition") from error
+        require_lossless(
+            self.repository.get(scene_id).actions,
+            [a.model_dump() for a in parsed.actions],
+        )
         self._validate(scene)
         if any(a.type == "durable_wait" for a in scene.actions):
             raise InvalidReferenceError("Durable waits require server scene execution")

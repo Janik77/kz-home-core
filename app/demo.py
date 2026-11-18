@@ -108,7 +108,8 @@ def bootstrap_demo(engine, email, password):
                     current = scene_service.get(definition.id)
                     if (
                         current.house_id != definition.house_id
-                        or current.actions != definition.actions
+                        or current.is_draft
+                        or [a.model_dump() for a in current.actions] != [a.model_dump() for a in definition.actions]
                     ):
                         raise BootstrapError("Conflicting demo scene")
                 else:

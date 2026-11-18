@@ -46,6 +46,9 @@ def require_deadline(session, run_id, now, position=None):
     if deadline is None:
         raise ConflictError("Scene dispatch deadline has elapsed")
     run = session.get(SceneRunORM, run_id, populate_existing=True)
+    if run.source_kind == "scene":
+        from app.services.scene_run_service import SceneRunService
+        SceneRunService(session).require_not_draft(run.scene_id)
     if run.execution_mode == "server":
         # Recheck at command commit and again immediately before MQTT publish.
         from app.services.scene_run_service import SceneRunService
