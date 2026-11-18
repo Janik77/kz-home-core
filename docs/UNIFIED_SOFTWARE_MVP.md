@@ -1,9 +1,9 @@
 # Общая программная версия KZ Home
 
 Кандидат, не заявление о готовности:
-- Core runtime `af6dcadddcfc2d5bee97da4386021495a54d1f9a`.
-- Web `2ccf4172579563ad5e6cb1b0f4dba4147aada558`.
-- Tooling `3efaefd203897eb90753ed8c5239348848451c56`, schema `0016_durable_waits`.
+- Core runtime `fc232035f78c99171fd72ac82c78eb1b5bb657fa`.
+- Web `31dd1029173af6c7ff4ed4e9bf0c80679c185b3b`.
+- Tooling `5ac2045476ef9a7b772e908249044b1e5bccb080`, schema `0017_metadata_cas`.
 - Отдельная ветка `integration/durable-wait-web31`, без merge в main.
 
 **Единая инструкция:** [read-only preflight, backup, новое назначение, проверка и rollback](SOFTWARE_UPGRADE.md). Сейчас квалификация только в CI; действующий стенд владельца не изменять.
