@@ -57,7 +57,10 @@ def main():
         import importlib.util
 
         manager.validate_source_checkout(old_core)
-        assert manager.source_contract(old_core)[2] == "0016_durable_waits"
+        assert manager.source_contract(old_core)[2] in {
+            "0016_durable_waits",
+            "0017_metadata_cas",
+        }
         spec = importlib.util.spec_from_file_location(
             "source56_wait_profile", old_core / "tools/durable_software.py"
         )

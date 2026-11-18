@@ -13,6 +13,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - source: core58
+            core: cfe6ce70ed8e2f3392567ec27a807343d5e866bc
+            web: 31dd1029173af6c7ff4ed4e9bf0c80679c185b3b
           - source: core56
             core: f2ec065426e72fb60b3e944ca6fd852bdffde48a
             web: 2ccf4172579563ad5e6cb1b0f4dba4147aada558
@@ -41,7 +44,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: Janik77/kz-home-web
-          ref: 31dd1029173af6c7ff4ed4e9bf0c80679c185b3b
+          ref: e6372058acaab7d1980b39adef37efb8e7f198b3
           path: web
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -80,7 +83,7 @@ jobs:
         working-directory: core
         run: '"$RUNNER_TEMP/durable-venv/bin/python" -B tests/upgrade_software_acceptance.py ../web ../core-before ../web-before'
 
-      - name: Source56 parked intent is invalidated only in upgraded copy
-        if: matrix.source == 'core56'
+      - name: Source56/58 parked intent is invalidated only in upgraded copy
+        if: matrix.source == 'core56' || matrix.source == 'core58'
         working-directory: core
         run: '"$RUNNER_TEMP/durable-venv/bin/python" -B tests/wait_profile_acceptance.py ../web ../core-before ../web-before'

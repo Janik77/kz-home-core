@@ -10,10 +10,10 @@ def test_source52_exact_contract_and_schedule_pins():
         "74b7238f10a9e56cbc600f9cac21b29a5c15b46e",
         "0014_numeric_thresholds",
     )
-    assert len(manager.SUPPORTED_UPGRADE_SOURCES) == 5
-    assert manager.CORE_SHA == "fc232035f78c99171fd72ac82c78eb1b5bb657fa"
-    assert manager.WEB_SHA == "31dd1029173af6c7ff4ed4e9bf0c80679c185b3b"
-    assert manager.EXPECTED_MIGRATION == "0017_metadata_cas"
+    assert len(manager.SUPPORTED_UPGRADE_SOURCES) == 6
+    assert manager.CORE_SHA == "1a43ecba1cd07dd231f313fcd42d4d4276e13967"
+    assert manager.WEB_SHA == "e6372058acaab7d1980b39adef37efb8e7f198b3"
+    assert manager.EXPECTED_MIGRATION == "0018_scene_drafts"
 
 
 def test_source52_fingerprint_preserves_numeric_fields_and_latch():
