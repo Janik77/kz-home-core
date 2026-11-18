@@ -19,13 +19,13 @@ import traceback
 from uuid import uuid4
 
 CORE = Path(__file__).resolve().parents[1]
-CORE_SHA = "fc232035f78c99171fd72ac82c78eb1b5bb657fa"
-WEB_SHA = "31dd1029173af6c7ff4ed4e9bf0c80679c185b3b"
+CORE_SHA = "1a43ecba1cd07dd231f313fcd42d4d4276e13967"
+WEB_SHA = "36515bdcb003e875108dd722febe5c969825f304"
 PG = "postgres:17-bookworm@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6ef6225b3e5d59c7afb35e994"
 MQTT = "eclipse-mosquitto:2@sha256:75d6662dee52c947dc9dd9c29f1d8d7ffef78ddaf38001caa09755681e8bbc98"
 OPENSSL = "alpine/openssl:latest@sha256:6821afa2476e11be343f29275f2ca24291720ff0a7148bd131fd8e314ff26d9e"
 LABEL = "kzhome.durable-software"
-EXPECTED_MIGRATION = "0017_metadata_cas"
+EXPECTED_MIGRATION = "0018_scene_drafts"
 BROKER_FILES = ("ca.crt", "server.crt", "server.key", "passwd", "acl", "mosquitto.conf")
 FILES = (
     "profile.json",
@@ -523,7 +523,13 @@ SOURCE50_TOOL_SHA = "c03aa044642e8e09bf61ff51c35a46079d1118f0"
 SOURCE52_TOOL_SHA = "244549d3cd6b5b2c5b7bc9757e438d2729553155"
 SOURCE54_TOOL_SHA = "2142dcd584f990031d0c02ed6b4c9f1a90d14eed"
 SOURCE56_TOOL_SHA = "f2ec065426e72fb60b3e944ca6fd852bdffde48a"
+SOURCE58_TOOL_SHA = "cfe6ce70ed8e2f3392567ec27a807343d5e866bc"
 SUPPORTED_UPGRADE_SOURCES = {
+    SOURCE58_TOOL_SHA: (
+        "fc232035f78c99171fd72ac82c78eb1b5bb657fa",
+        "31dd1029173af6c7ff4ed4e9bf0c80679c185b3b",
+        "0017_metadata_cas",
+    ),
     SOURCE56_TOOL_SHA: (
         "af6dcadddcfc2d5bee97da4386021495a54d1f9a",
         "2ccf4172579563ad5e6cb1b0f4dba4147aada558",
@@ -554,7 +560,7 @@ def source_contract(path):
     ).strip()
     if head not in SUPPORTED_UPGRADE_SOURCES:
         raise ValueError(
-            "Use an exact supported Core #42, #50, #52, #54 or #56 source checkout"
+            "Use an exact supported Core #42, #50, #52, #54, #56 or #58 source checkout"
         )
     return SUPPORTED_UPGRADE_SOURCES[head]
 
@@ -565,6 +571,7 @@ def legacy_fingerprints(profile, source_migration=SOURCE_MIGRATION):
         "0014_numeric_thresholds",
         "0015_house_schedules",
         "0016_durable_waits",
+        "0017_metadata_cas",
     }:
         return source50_fingerprints(profile, source_migration)
     tables = profile.query(
@@ -576,6 +583,7 @@ def legacy_fingerprints(profile, source_migration=SOURCE_MIGRATION):
             raise ValueError("Unexpected source table")
         # Fixed old columns on both sides; validate additive metadata separately.
         columns = {
+            "scenes": "id, name, house_id, actions, created_at, updated_at, revision",
             "scene_run_actions": "run_id, position, device_id, requested_on, claimed, failure_code",
             "houses": "id, name, created_at, updated_at",
             "floors": 'id, house_id, name, "order", created_at, updated_at',
@@ -597,8 +605,10 @@ def legacy_fingerprints(profile, source_migration=SOURCE_MIGRATION):
 
 def source50_fingerprints(profile, source_migration="0013_device_automations"):
     # Preserve every source column; exclude ONLY additions newer than that source.
-    excluded = ["metadata_revision"]
-    if source_migration != "0016_durable_waits":
+    excluded = ["is_draft"]
+    if source_migration != "0017_metadata_cas":
+        excluded.append("metadata_revision")
+    if source_migration not in {"0016_durable_waits", "0017_metadata_cas"}:
         excluded += [
             "durable_plan",
             "wait_position",
@@ -606,7 +616,11 @@ def source50_fingerprints(profile, source_migration="0013_device_automations"):
             "cancelled_at",
             "dispatch_before",
         ]
-    if source_migration not in {"0015_house_schedules", "0016_durable_waits"}:
+    if source_migration not in {
+        "0015_house_schedules",
+        "0016_durable_waits",
+        "0017_metadata_cas",
+    }:
         excluded += [
             "timezone",
             "timezone_revision",
@@ -620,7 +634,7 @@ def source50_fingerprints(profile, source_migration="0013_device_automations"):
         excluded += ["numeric_observed_at", "numeric_watermarks", "threshold_state"]
     excluded_sql = ",".join("'" + name + "'" for name in excluded)
     excluded_tables = "'alembic_version'"
-    if source_migration != "0016_durable_waits":
+    if source_migration not in {"0016_durable_waits", "0017_metadata_cas"}:
         excluded_tables += ",'scene_run_waits'"
     tables = profile.query(
         f"SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename NOT IN ({excluded_tables}) ORDER BY tablename"
@@ -651,7 +665,7 @@ def validate_source_checkout(path):
     ).strip()
     if head not in SUPPORTED_UPGRADE_SOURCES or dirty:
         raise ValueError(
-            "Use an exact clean supported Core #42, #50, #52, #54 or #56 source checkout"
+            "Use an exact clean supported Core #42, #50, #52, #54, #56 or #58 source checkout"
         )
     return path
 
@@ -662,8 +676,11 @@ def migrate_upgrade(profile, source_migration=SOURCE_MIGRATION, expected_source=
     from alembic.config import Config
     from sqlalchemy import create_engine
 
-    if source_migration == "0016_durable_waits" and expected_source is None:
-        raise ValueError("Source56 requires full backup fingerprints")
+    if (
+        source_migration in {"0016_durable_waits", "0017_metadata_cas"}
+        and expected_source is None
+    ):
+        raise ValueError("Source56/58 requires full backup fingerprints")
     before = legacy_fingerprints(profile, source_migration)
     if profile.query("SELECT count(*) FROM physical_devices") != "0":
         raise ValueError("Physical inventory refused")
@@ -676,7 +693,7 @@ def migrate_upgrade(profile, source_migration=SOURCE_MIGRATION, expected_source=
             if expected_source is not None:
                 from tools.restore_policy import (
                     database_snapshot,
-                    verified_metadata_migration,
+                    verified_scene_draft_migration,
                 )
 
                 old_tables, old_rows, original_fingerprints = database_snapshot(
@@ -687,8 +704,8 @@ def migrate_upgrade(profile, source_migration=SOURCE_MIGRATION, expected_source=
             cfg.attributes["connection"] = connection
             command.upgrade(cfg, EXPECTED_MIGRATION)
             if expected_source is not None:
-                verified_baseline = verified_metadata_migration(
-                    connection, old_tables, old_rows
+                verified_baseline = verified_scene_draft_migration(
+                    connection, old_tables, old_rows, source_migration
                 )
     finally:
         engine.dispose()
@@ -700,6 +717,7 @@ def migrate_upgrade(profile, source_migration=SOURCE_MIGRATION, expected_source=
         "0014_numeric_thresholds",
         "0015_house_schedules",
         "0016_durable_waits",
+        "0017_metadata_cas",
     }:
         for table, column in (
             ("devices", "numeric_observed_at"),
@@ -714,7 +732,11 @@ def migrate_upgrade(profile, source_migration=SOURCE_MIGRATION, expected_source=
             ):
                 raise ValueError("Unexpected initialized numeric metadata")
 
-    if source_migration not in {"0015_house_schedules", "0016_durable_waits"}:
+    if source_migration not in {
+        "0015_house_schedules",
+        "0016_durable_waits",
+        "0017_metadata_cas",
+    }:
         for table, predicate in [
             (
                 "houses",
@@ -728,7 +750,7 @@ def migrate_upgrade(profile, source_migration=SOURCE_MIGRATION, expected_source=
         ]:
             if profile.query(f"SELECT count(*) FROM {table} WHERE {predicate}") != "0":
                 raise ValueError("Unexpected initialized schedule metadata")
-    if source_migration != "0016_durable_waits":
+    if source_migration not in {"0016_durable_waits", "0017_metadata_cas"}:
         for table, predicate in [
             (
                 "scene_runs",
@@ -739,12 +761,17 @@ def migrate_upgrade(profile, source_migration=SOURCE_MIGRATION, expected_source=
         ]:
             if profile.query(f"SELECT count(*) FROM {table} WHERE {predicate}") != "0":
                 raise ValueError("Unexpected initialized durable wait metadata")
-    for table in ("houses", "floors", "rooms", "devices"):
-        if (
-            profile.query(f"SELECT count(*) FROM {table} WHERE metadata_revision != 1")
-            != "0"
-        ):
-            raise ValueError("Unexpected initialized metadata revision")
+    if source_migration != "0017_metadata_cas":
+        for table in ("houses", "floors", "rooms", "devices"):
+            if (
+                profile.query(
+                    f"SELECT count(*) FROM {table} WHERE metadata_revision != 1"
+                )
+                != "0"
+            ):
+                raise ValueError("Unexpected initialized metadata revision")
+    if profile.query("SELECT count(*) FROM scenes WHERE is_draft") != "0":
+        raise ValueError("Unexpected initialized scene draft flag")
     return (
         verified_baseline
         if verified_baseline is not None
@@ -805,7 +832,10 @@ def _restore(source, destination, *, upgrading, source_version=None):
         SOURCE_MIGRATION,
     )
     expected_format = (
-        1 if upgrading and source_version[2] != "0016_durable_waits" else 2
+        1
+        if upgrading
+        and source_version[2] not in {"0016_durable_waits", "0017_metadata_cas"}
+        else 2
     )
     if (
         manifest.get("format") != expected_format

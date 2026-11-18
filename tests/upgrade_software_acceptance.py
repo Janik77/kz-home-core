@@ -136,9 +136,18 @@ def seed_numeric_source(http, source):
     """Actual numeric reports + receipt on old runtime, never invented persisted rows."""
     from numeric_profile_acceptance import sample
 
+    device = http.get("/core-api/devices/fixture_relay").json()
+    token = (
+        {"expected_metadata_revision": device["metadata_revision"]}
+        if "metadata_revision" in device
+        else {}
+    )
     response = http.patch(
         "/core-api/devices/fixture_relay",
-        json={"capabilities": ["on_off", "illuminance", "temperature", "humidity"]},
+        json={
+            "capabilities": ["on_off", "illuminance", "temperature", "humidity"],
+            **token,
+        },
     )
     assert response.status_code == 200
     response = http.post(
@@ -279,10 +288,16 @@ def main():
         process, url = launch(source, old_web, old_core)
         with httpx.Client(base_url=url, trust_env=False, timeout=5) as http:
             login(http, source)
+            house = http.get("/core-api/houses/fixture_house").json()
+            token = (
+                {"expected_metadata_revision": house["metadata_revision"]}
+                if "metadata_revision" in house
+                else {}
+            )
             assert (
                 http.patch(
                     "/core-api/houses/fixture_house",
-                    json={"name": "Keep original home"},
+                    json={"name": "Keep original home", **token},
                 ).status_code
                 == 200
             )
@@ -342,6 +357,7 @@ def main():
                 "0014_numeric_thresholds",
                 "0015_house_schedules",
                 "0016_durable_waits",
+                "0017_metadata_cas",
             }:
                 assert (
                     http.put(
@@ -379,9 +395,14 @@ def main():
                 "0014_numeric_thresholds",
                 "0015_house_schedules",
                 "0016_durable_waits",
+                "0017_metadata_cas",
             }:
                 numeric_stamps = seed_numeric_source(http, source)
-            if source_migration in {"0015_house_schedules", "0016_durable_waits"}:
+            if source_migration in {
+                "0015_house_schedules",
+                "0016_durable_waits",
+                "0017_metadata_cas",
+            }:
                 seed_schedule_source(http, source)
 
             cli(

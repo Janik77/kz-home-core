@@ -172,6 +172,8 @@ def snapshot(http):
         "/rooms/saved_room",
         "/scenes/saved_scene",
         "/automations/saved_automation",
+        "/scenes/saved_draft_copy",
+        "/automations/saved_disabled_copy",
         "/v1/houses/fixture_house/me/device-favorites",
     )
     values = {}
@@ -180,6 +182,41 @@ def snapshot(http):
         assert response.status_code == 200
         values[path] = response.json()
     return values
+
+
+def assert_inert_copies(http, profile):
+    before = profile.query("SELECT count(*) FROM device_commands")
+    scene = http.get("/core-api/scenes/saved_draft_copy").json()
+    assert scene["is_draft"] and scene["revision"] == 1
+    rule = http.get("/core-api/automations/saved_disabled_copy").json()
+    assert not rule["enabled"] and rule["revision"] == 1
+    assert http.get("/core-api/automations/saved_disabled_copy/runs").json() == []
+    assert (
+        profile.query(
+            "SELECT count(*) FROM automations WHERE id='saved_disabled_copy' AND authorized_by IS NULL AND threshold_state::text='{}' AND schedule_state::text='{}'"
+        )
+        == "1"
+    )
+    for path in (
+        "/core-api/scenes/saved_draft_copy/run",
+        "/core-api/v1/houses/fixture_house/scene-runs",
+        "/core-api/v1/houses/fixture_house/scene-runs/execute",
+    ):
+        result = http.post(
+            path,
+            headers={"Idempotency-Key": uuid4().hex},
+            json={"scene_id": "saved_draft_copy", "expected_revision": 1},
+        )
+        assert result.status_code == 409 and result.json()["code"] == "scene_draft", (
+            result.text
+        )
+    assert (
+        profile.query(
+            "SELECT count(*) FROM scene_runs WHERE scene_id IN ('saved_draft_copy','saved_disabled_copy')"
+        )
+        == "0"
+    )
+    assert profile.query("SELECT count(*) FROM device_commands") == before
 
 
 def cleanup(profile, root):
@@ -333,6 +370,28 @@ def main():
                 },
             )
             assert response.status_code == 201, response.text
+            for kind, original, copied in (
+                ("scenes", "saved_scene", "saved_draft_copy"),
+                ("automations", "saved_automation", "saved_disabled_copy"),
+            ):
+                source_definition = http.get(f"/core-api/{kind}/{original}").json()
+                before_copy = source.query("SELECT count(*) FROM device_commands")
+                copy = http.post(
+                    f"/core-api/{kind}/{original}/duplicate",
+                    json={
+                        "id": copied,
+                        "name": "Preserved non-executable copy",
+                        "expected_revision": source_definition["revision"],
+                    },
+                )
+                assert copy.status_code == 201, copy.text
+                assert (
+                    source.query("SELECT count(*) FROM device_commands") == before_copy
+                )
+                assert (
+                    http.get(f"/core-api/{kind}/{original}").json() == source_definition
+                )
+            assert_inert_copies(http, source)
             expected = snapshot(http)
             command(http, True)
             command(http, False)
@@ -428,6 +487,7 @@ def main():
         with httpx.Client(base_url=url, trust_env=False, timeout=5) as http:
             login(http, source)
             assert snapshot(http) == expected
+            assert_inert_copies(http, source)
             recovered = read_run(http, run_id)
             assert recovered["actions"][0] == first_action
             assert recovered["actions"][1]["status"] == "ready"
@@ -558,6 +618,54 @@ def main():
                 )
                 == "1"
             )
+            assert_inert_copies(http, restored)
+            before_activation = restored.query("SELECT count(*) FROM device_commands")
+            edited = http.patch(
+                "/core-api/scenes/saved_draft_copy",
+                json={
+                    "expected_revision": 1,
+                    "actions": [
+                        {
+                            "type": "device_state",
+                            "device_id": "fixture_relay",
+                            "state": {"on": False},
+                        }
+                    ],
+                },
+            )
+            assert edited.status_code == 200 and edited.json()["is_draft"]
+            activated = http.post(
+                "/core-api/scenes/saved_draft_copy/activate",
+                json={"expected_revision": 2},
+            )
+            assert activated.status_code == 200 and not activated.json()["is_draft"]
+            assert (
+                restored.query("SELECT count(*) FROM device_commands")
+                == before_activation
+            )
+            assert (
+                restored.query(
+                    "SELECT count(*) FROM scene_runs WHERE scene_id='saved_draft_copy'"
+                )
+                == "0"
+            )
+            explicit = http.post(
+                "/core-api/v1/houses/fixture_house/scene-runs",
+                headers={"Idempotency-Key": uuid4().hex},
+                json={"scene_id": "saved_draft_copy", "expected_revision": 3},
+            )
+            assert explicit.status_code == 201
+            assert (
+                dispatch_scene_action(http, explicit.json()["id"], 0, False)["status"]
+                == "succeeded"
+            )
+            assert (
+                int(restored.query("SELECT count(*) FROM device_commands"))
+                == int(before_activation) + 1
+            )
+            print(
+                "PASS copied definitions PG/TLS: draft+disabled copy preserved across restart/backup/restore; zero copied intent; activation zero commands; explicit run ACK/state; source untouched"
+            )
             favorite_path = "/core-api/v1/houses/fixture_house/me/device-favorites"
             assert http.delete(favorite_path + "/fixture_relay").status_code == 204
             assert http.get(favorite_path).json() == {"device_ids": []}
@@ -579,6 +687,7 @@ def main():
         with httpx.Client(base_url=url, trust_env=False, timeout=5) as http:
             login(http, source)
             assert snapshot(http) == expected, "Restore modified source"
+            assert_inert_copies(http, source)
             assert (
                 http.get("/core-api/automations/saved_automation/runs").json()
                 == automation_history

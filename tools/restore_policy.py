@@ -193,3 +193,41 @@ def verified_metadata_migration(connection, old_tables, old_rows):
     if actual != expected:
         raise ValueError("Metadata migration changed existing rows or counter defaults")
     return expected
+
+
+def verified_scene_draft_migration(connection, old_tables, old_rows, source_version):
+    """0016/0017→0018: exact full-manifest delta, never a recaptured baseline."""
+    if source_version not in {"0016_durable_waits", "0017_metadata_cas"}:
+        raise ValueError("Unsupported source draft migration version")
+    tables, _, actual = database_snapshot(connection)
+    if set(tables) != set(old_tables):
+        raise ValueError("Scene draft migration changed the table inventory")
+    expected = {}
+    for name, old_table in old_tables.items():
+        columns = list(old_table.c.keys())
+        rows = [dict(row) for row in old_rows[name]]
+        if source_version == "0016_durable_waits" and name in {
+            "houses",
+            "floors",
+            "rooms",
+            "devices",
+        }:
+            columns.append("metadata_revision")
+            for row in rows:
+                row["metadata_revision"] = 1
+        if name == "scenes":
+            columns.append("is_draft")
+            for row in rows:
+                row["is_draft"] = False
+        if name == "alembic_version":
+            if rows != [{"version_num": source_version}]:
+                raise ValueError("Unexpected source draft migration version")
+            rows = [{"version_num": "0018_scene_drafts"}]
+        if list(tables[name].c.keys()) != columns:
+            raise ValueError("Scene draft migration changed unexpected columns")
+        expected[name] = table_fingerprint(columns, rows)
+    if actual != expected:
+        raise ValueError(
+            "Scene draft migration changed existing rows or explicit defaults"
+        )
+    return expected

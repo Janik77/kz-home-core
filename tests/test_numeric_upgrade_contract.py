@@ -16,8 +16,8 @@ def test_supported_sources_include_unchanged_42_and_explicit_50():
         "6f8f72f86f668b53f85c13054644c80427fe9eab",
         "0013_device_automations",
     )
-    assert manager.CORE_SHA == "fc232035f78c99171fd72ac82c78eb1b5bb657fa"
-    assert manager.EXPECTED_MIGRATION == "0017_metadata_cas"
+    assert manager.CORE_SHA == "1a43ecba1cd07dd231f313fcd42d4d4276e13967"
+    assert manager.EXPECTED_MIGRATION == "0018_scene_drafts"
 
 
 @pytest.mark.parametrize(
