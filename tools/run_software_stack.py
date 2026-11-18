@@ -34,6 +34,25 @@ def validate_web(root):
     return root
 
 
+async def wait_for_web(http, process, *, timeout=20, interval=0.1):
+    """Retry only read-only startup probes; never replay login or command requests."""
+    import httpx
+
+    async with asyncio.timeout(timeout):
+        while True:
+            if process.poll() is not None:
+                raise RuntimeError("Owned Vite process exited")
+            try:
+                response = await http.get("/")
+                if response.status_code == 200:
+                    return
+            except httpx.TransportError:
+                # During rapid restart a connection may accept then reset before
+                # the Vite listener is ready; the same bounded deadline applies.
+                pass
+            await asyncio.sleep(interval)
+
+
 async def run(
     web,
     smoke,
@@ -121,17 +140,7 @@ async def run(
                 )
                 url = f"http://127.0.0.1:{port}"
                 async with httpx.AsyncClient(base_url=url, trust_env=False) as http:
-                    async with asyncio.timeout(20):
-                        while True:
-                            if vite.poll() is not None:
-                                raise RuntimeError("Owned Vite process exited")
-                            try:
-                                response = await http.get("/")
-                                if response.status_code == 200:
-                                    break
-                            except httpx.ConnectError:
-                                pass
-                            await asyncio.sleep(0.1)
+                    await wait_for_web(http, vite)
                     print(
                         f"Owned software stack: {url}; migration {migration}",
                         flush=True,
