@@ -20,15 +20,37 @@ def main():
     assert os.environ.get("GITHUB_ACTIONS") == "true", "CI only"
     web = Path(sys.argv[1]).resolve()
     manager.validate_core()
+    old_core = Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else None
+    old_web = Path(sys.argv[3]).resolve() if old_core else None
+    source_manager = manager
+    if old_core:
+        import importlib.util
+
+        manager.validate_source_checkout(old_core)
+        assert manager.source_contract(old_core)[2] == "0016_durable_waits"
+        spec = importlib.util.spec_from_file_location(
+            "source56_wait_profile", old_core / "tools/durable_software.py"
+        )
+        source_manager = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(source_manager)
+        source_manager.validate_core()
+
+    def restore_copy(backup, target):
+        return (
+            manager.upgrade(backup, target, old_core)
+            if old_core
+            else manager.restore(backup, target)
+        )
+
     docker = manager.Docker()
     before = inventory(docker)
     root = Path(tempfile.mkdtemp(prefix="kzsoft-durable-test-")).resolve()
     profiles = []
     process = None
     try:
-        source = manager.initialize(root / "source")
+        source = source_manager.initialize(root / "source")
         profiles.append(source)
-        process, url = launch(source, web)
+        process, url = launch(source, old_web or web, old_core or manager.CORE)
         base = "/core-api/v1/houses/fixture_house/scene-runs"
         with httpx.Client(base_url=url, trust_env=False, timeout=10) as http:
             login(http, source)
@@ -87,9 +109,11 @@ def main():
         (bad_backup / "manifest.json").write_text(json.dumps(bad_manifest))
         refused = root / "refused-fingerprint"
         try:
-            manager.restore(bad_backup, refused)
+            restore_copy(bad_backup, refused)
         except ValueError as error:
-            assert "differs from complete backup fingerprints" in str(error), str(error)
+            assert "differs from complete backup fingerprints" in str(
+                error
+            ) or "Source backup database fingerprint mismatch" in str(error), str(error)
         else:
             raise AssertionError("False fingerprint accepted")
         failed = manager.Profile(refused, docker)
@@ -105,10 +129,36 @@ def main():
             == "0"
         )
         failed.stop()
-        target = manager.restore(backup, root / "target")
+        target = restore_copy(backup, root / "target")
         profiles.append(target)
         audit = json.loads((target.path / "restore-policy.json").read_text())
-        assert audit["before"] == manifest["database"]
+        if old_core:
+            # migrate_upgrade first compares the FULL source manifest before any
+            # DDL, then all legacy columns and only counter=1 additions. The
+            # policy receives that verified post-migration baseline atomically.
+            target._open_pg()
+            assert (
+                target.query("SELECT version_num FROM alembic_version")
+                == manager.EXPECTED_MIGRATION
+            )
+            for table in ("houses", "floors", "rooms", "devices"):
+                assert (
+                    target.query(
+                        f"SELECT count(*) FROM {table} WHERE metadata_revision != 1"
+                    )
+                    == "0"
+                )
+            assert (
+                audit["before"]["scene_run_waits"]
+                == manifest["database"]["scene_run_waits"]
+            )
+            assert (
+                audit["before"]["device_commands"]
+                == manifest["database"]["device_commands"]
+            )
+            target.stop()
+        else:
+            assert audit["before"] == manifest["database"]
         assert len(audit["changes"]) == 1 and audit["changes"][0]["run_id"] == run["id"]
         assert audit["changes"][0]["reason"] == "restore_invalidation"
         process, url = launch(target, web)
@@ -157,7 +207,7 @@ def main():
         source.stop()
         assert digest(source.path) == source_files and digest(backup) == backup_files
         # Original database retains its own intent; only it may resume once.
-        process, url = launch(source, web)
+        process, url = launch(source, old_web or web, old_core or manager.CORE)
         with httpx.Client(base_url=url, trust_env=False, timeout=10) as http:
             login(http, source)
             limit = time.monotonic() + 150
