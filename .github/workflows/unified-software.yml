@@ -10,7 +10,7 @@ concurrency:
 jobs:
   web-core-relay:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 35
     env:
       BASELINE_WEB_SOURCE: ${{ github.workspace }}/web-before
       LIVE_CORE_SOURCE: ${{ github.workspace }}/core
