@@ -16,6 +16,9 @@ jobs:
           - source: core42
             core: 82653a849d2b61479de1c3bb4d74e7f388523667
             web: c2c4fa89a0da3652e8e0cca3629300ecfd7e658f
+          - source: core52
+            core: 244549d3cd6b5b2c5b7bc9757e438d2729553155
+            web: 74b7238f10a9e56cbc600f9cac21b29a5c15b46e
           - source: core50
             core: c03aa044642e8e09bf61ff51c35a46079d1118f0
             web: 6f8f72f86f668b53f85c13054644c80427fe9eab
@@ -32,7 +35,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: Janik77/kz-home-web
-          ref: 74b7238f10a9e56cbc600f9cac21b29a5c15b46e
+          ref: f5508461d00ae9a7c9841330a30c83bd6a8250da
           path: web
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

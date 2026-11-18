@@ -19,13 +19,13 @@ import traceback
 from uuid import uuid4
 
 CORE = Path(__file__).resolve().parents[1]
-CORE_SHA = "1ae52afa22431943064b5e85313f671b073b9458"
-WEB_SHA = "74b7238f10a9e56cbc600f9cac21b29a5c15b46e"
+CORE_SHA = "45b63628829580bc564ff2490af645951926e82e"
+WEB_SHA = "f5508461d00ae9a7c9841330a30c83bd6a8250da"
 PG = "postgres:17-bookworm@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6ef6225b3e5d59c7afb35e994"
 MQTT = "eclipse-mosquitto:2@sha256:75d6662dee52c947dc9dd9c29f1d8d7ffef78ddaf38001caa09755681e8bbc98"
 OPENSSL = "alpine/openssl:latest@sha256:6821afa2476e11be343f29275f2ca24291720ff0a7148bd131fd8e314ff26d9e"
 LABEL = "kzhome.durable-software"
-EXPECTED_MIGRATION = "0014_numeric_thresholds"
+EXPECTED_MIGRATION = "0015_house_schedules"
 BROKER_FILES = ("ca.crt", "server.crt", "server.key", "passwd", "acl", "mosquitto.conf")
 FILES = (
     "profile.json",
@@ -503,7 +503,13 @@ SOURCE_RUNTIME_SHA = "f946a07f67f9ccb1e8f62c99860a0842bf3a062b"
 SOURCE_WEB_SHA = "c2c4fa89a0da3652e8e0cca3629300ecfd7e658f"
 SOURCE_MIGRATION = "0010_scene_runs"
 SOURCE50_TOOL_SHA = "c03aa044642e8e09bf61ff51c35a46079d1118f0"
+SOURCE52_TOOL_SHA = "244549d3cd6b5b2c5b7bc9757e438d2729553155"
 SUPPORTED_UPGRADE_SOURCES = {
+    SOURCE52_TOOL_SHA: (
+        "1ae52afa22431943064b5e85313f671b073b9458",
+        "74b7238f10a9e56cbc600f9cac21b29a5c15b46e",
+        "0014_numeric_thresholds",
+    ),
     SOURCE_TOOL_SHA: (SOURCE_RUNTIME_SHA, SOURCE_WEB_SHA, SOURCE_MIGRATION),
     SOURCE50_TOOL_SHA: (
         "f6a0826929c87b39dec7e81d22280f1218bf18f1",
@@ -518,13 +524,13 @@ def source_contract(path):
         ["git", "-C", str(path), "rev-parse", "HEAD"], text=True
     ).strip()
     if head not in SUPPORTED_UPGRADE_SOURCES:
-        raise ValueError("Use an exact supported Core #42 or #50 source checkout")
+        raise ValueError("Use an exact supported Core #42, #50 or #52 source checkout")
     return SUPPORTED_UPGRADE_SOURCES[head]
 
 
 def legacy_fingerprints(profile, source_migration=SOURCE_MIGRATION):
-    if source_migration == "0013_device_automations":
-        return source50_fingerprints(profile)
+    if source_migration in {"0013_device_automations", "0014_numeric_thresholds"}:
+        return source50_fingerprints(profile, source_migration)
     tables = profile.query(
         "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename NOT IN ('alembic_version','device_favorites') ORDER BY tablename"
     ).splitlines()
@@ -534,6 +540,7 @@ def legacy_fingerprints(profile, source_migration=SOURCE_MIGRATION):
             raise ValueError("Unexpected source table")
         # Fixed old columns on both sides; validate additive metadata separately.
         columns = {
+            "houses": "id, name, created_at, updated_at",
             "scene_runs": "id, house_id, requested_by, idempotency_hash, scene_id, scene_revision, created_at, dispatch_deadline",
             "devices": "id, name, room_id, type, state, capabilities, metadata, online, created_at, updated_at",
             "automations": "id, name, house_id, enabled, trigger, conditions, actions, created_at, updated_at, revision",
@@ -549,8 +556,20 @@ def legacy_fingerprints(profile, source_migration=SOURCE_MIGRATION):
     return result
 
 
-def source50_fingerprints(profile):
-    # Preserve EVERY pre-0014 column, including authority, receipts and favorites.
+def source50_fingerprints(profile, source_migration="0013_device_automations"):
+    # Preserve every source column; exclude ONLY additions newer than that source.
+    excluded = [
+        "timezone",
+        "timezone_revision",
+        "timezone_effective_after",
+        "schedule_cursor",
+        "schedule_effective_after",
+        "schedule_state",
+        "schedule_timezone_revision",
+    ]
+    if source_migration == "0013_device_automations":
+        excluded += ["numeric_observed_at", "numeric_watermarks", "threshold_state"]
+    excluded_sql = ",".join("'" + name + "'" for name in excluded)
     tables = profile.query(
         "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename != 'alembic_version' ORDER BY tablename"
     ).splitlines()
@@ -559,7 +578,7 @@ def source50_fingerprints(profile):
         if not re.fullmatch(r"[a-z][a-z0-9_]*", table):
             raise ValueError("Unexpected source table")
         columns = profile.query(
-            f"SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='{table}' AND column_name NOT IN ('numeric_observed_at','numeric_watermarks','threshold_state') ORDER BY ordinal_position"
+            f"SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='{table}' AND column_name NOT IN ({excluded_sql}) ORDER BY ordinal_position"
         ).splitlines()
         if not columns or any(not re.fullmatch(r"[a-z][a-z0-9_]*", c) for c in columns):
             raise ValueError("Unexpected source columns")
@@ -579,7 +598,9 @@ def validate_source_checkout(path):
         ["git", "-C", str(path), "status", "--porcelain"], text=True
     ).strip()
     if head not in SUPPORTED_UPGRADE_SOURCES or dirty:
-        raise ValueError("Use an exact clean supported Core #42 or #50 source checkout")
+        raise ValueError(
+            "Use an exact clean supported Core #42, #50 or #52 source checkout"
+        )
     return path
 
 
@@ -605,18 +626,33 @@ def migrate_upgrade(profile, source_migration=SOURCE_MIGRATION):
         raise ValueError("Upgrade changed existing data")
     if source_migration == SOURCE_MIGRATION:
         validate_migrated_metadata(profile)
-    for table, column in (
-        ("devices", "numeric_observed_at"),
-        ("devices", "numeric_watermarks"),
-        ("automations", "threshold_state"),
-    ):
-        if (
-            profile.query(
-                f"SELECT count(*) FROM {table} WHERE {column}::text != '{{}}'"
-            )
-            != "0"
+    if source_migration != "0014_numeric_thresholds":
+        for table, column in (
+            ("devices", "numeric_observed_at"),
+            ("devices", "numeric_watermarks"),
+            ("automations", "threshold_state"),
         ):
-            raise ValueError("Unexpected initialized numeric metadata")
+            if (
+                profile.query(
+                    f"SELECT count(*) FROM {table} WHERE {column}::text != '{{}}'"
+                )
+                != "0"
+            ):
+                raise ValueError("Unexpected initialized numeric metadata")
+
+    for table, predicate in [
+        (
+            "houses",
+            "timezone IS NOT NULL OR timezone_revision != 1 OR timezone_effective_after IS NOT NULL OR schedule_cursor IS NOT NULL",
+        ),
+        (
+            "automations",
+            "schedule_effective_after IS NOT NULL OR schedule_state::text != '{}'",
+        ),
+        ("scene_runs", "schedule_timezone_revision IS NOT NULL"),
+    ]:
+        if profile.query(f"SELECT count(*) FROM {table} WHERE {predicate}") != "0":
+            raise ValueError("Unexpected initialized schedule metadata")
 
 
 def validate_migrated_metadata(profile):
