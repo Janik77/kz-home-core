@@ -19,13 +19,13 @@ import traceback
 from uuid import uuid4
 
 CORE = Path(__file__).resolve().parents[1]
-CORE_SHA = "45b63628829580bc564ff2490af645951926e82e"
-WEB_SHA = "96c953f40f3a8eff464e2b57b5e7817456569206"
+CORE_SHA = "af6dcadddcfc2d5bee97da4386021495a54d1f9a"
+WEB_SHA = "2ccf4172579563ad5e6cb1b0f4dba4147aada558"
 PG = "postgres:17-bookworm@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6ef6225b3e5d59c7afb35e994"
 MQTT = "eclipse-mosquitto:2@sha256:75d6662dee52c947dc9dd9c29f1d8d7ffef78ddaf38001caa09755681e8bbc98"
 OPENSSL = "alpine/openssl:latest@sha256:6821afa2476e11be343f29275f2ca24291720ff0a7148bd131fd8e314ff26d9e"
 LABEL = "kzhome.durable-software"
-EXPECTED_MIGRATION = "0015_house_schedules"
+EXPECTED_MIGRATION = "0016_durable_waits"
 BROKER_FILES = ("ca.crt", "server.crt", "server.key", "passwd", "acl", "mosquitto.conf")
 FILES = (
     "profile.json",
@@ -393,6 +393,7 @@ class Profile:
             self.pg()
             self.verify_database()
             target = new_directory(destination)
+            fingerprints = profile_fingerprints(self)
             result = self.docker.run(
                 "exec",
                 self.name + "-pg",
@@ -415,12 +416,28 @@ class Profile:
                 name: hashlib.sha256((target / name).read_bytes()).hexdigest()
                 for name in (*FILES, "database.dump")
             }
+            if profile_fingerprints(self) != fingerprints:
+                raise ValueError("Backup source changed during dump")
             private_write(
-                target / "manifest.json", json.dumps({"format": 1, "sha256": hashes})
+                target / "manifest.json",
+                json.dumps({"format": 2, "sha256": hashes, "database": fingerprints}),
             )
         finally:
             self.stop()
         return target
+
+
+def profile_fingerprints(profile):
+    sys.path.insert(0, str(CORE))
+    from sqlalchemy import create_engine
+    from tools.restore_policy import full_fingerprints
+
+    engine = create_engine(profile._open_pg())
+    try:
+        with engine.connect() as connection:
+            return full_fingerprints(connection)
+    finally:
+        engine.dispose()
 
 
 def free_port():
@@ -504,7 +521,13 @@ SOURCE_WEB_SHA = "c2c4fa89a0da3652e8e0cca3629300ecfd7e658f"
 SOURCE_MIGRATION = "0010_scene_runs"
 SOURCE50_TOOL_SHA = "c03aa044642e8e09bf61ff51c35a46079d1118f0"
 SOURCE52_TOOL_SHA = "244549d3cd6b5b2c5b7bc9757e438d2729553155"
+SOURCE54_TOOL_SHA = "2142dcd584f990031d0c02ed6b4c9f1a90d14eed"
 SUPPORTED_UPGRADE_SOURCES = {
+    SOURCE54_TOOL_SHA: (
+        "45b63628829580bc564ff2490af645951926e82e",
+        "96c953f40f3a8eff464e2b57b5e7817456569206",
+        "0015_house_schedules",
+    ),
     SOURCE52_TOOL_SHA: (
         "1ae52afa22431943064b5e85313f671b073b9458",
         "74b7238f10a9e56cbc600f9cac21b29a5c15b46e",
@@ -524,15 +547,21 @@ def source_contract(path):
         ["git", "-C", str(path), "rev-parse", "HEAD"], text=True
     ).strip()
     if head not in SUPPORTED_UPGRADE_SOURCES:
-        raise ValueError("Use an exact supported Core #42, #50 or #52 source checkout")
+        raise ValueError(
+            "Use an exact supported Core #42, #50, #52 or #54 source checkout"
+        )
     return SUPPORTED_UPGRADE_SOURCES[head]
 
 
 def legacy_fingerprints(profile, source_migration=SOURCE_MIGRATION):
-    if source_migration in {"0013_device_automations", "0014_numeric_thresholds"}:
+    if source_migration in {
+        "0013_device_automations",
+        "0014_numeric_thresholds",
+        "0015_house_schedules",
+    }:
         return source50_fingerprints(profile, source_migration)
     tables = profile.query(
-        "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename NOT IN ('alembic_version','device_favorites') ORDER BY tablename"
+        "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename NOT IN ('alembic_version','device_favorites','scene_run_waits') ORDER BY tablename"
     ).splitlines()
     result = {}
     for table in tables:
@@ -540,6 +569,7 @@ def legacy_fingerprints(profile, source_migration=SOURCE_MIGRATION):
             raise ValueError("Unexpected source table")
         # Fixed old columns on both sides; validate additive metadata separately.
         columns = {
+            "scene_run_actions": "run_id, position, device_id, requested_on, claimed, failure_code",
             "houses": "id, name, created_at, updated_at",
             "scene_runs": "id, house_id, requested_by, idempotency_hash, scene_id, scene_revision, created_at, dispatch_deadline",
             "devices": "id, name, room_id, type, state, capabilities, metadata, online, created_at, updated_at",
@@ -559,19 +589,27 @@ def legacy_fingerprints(profile, source_migration=SOURCE_MIGRATION):
 def source50_fingerprints(profile, source_migration="0013_device_automations"):
     # Preserve every source column; exclude ONLY additions newer than that source.
     excluded = [
-        "timezone",
-        "timezone_revision",
-        "timezone_effective_after",
-        "schedule_cursor",
-        "schedule_effective_after",
-        "schedule_state",
-        "schedule_timezone_revision",
+        "durable_plan",
+        "wait_position",
+        "wait_checked_at",
+        "cancelled_at",
+        "dispatch_before",
     ]
+    if source_migration != "0015_house_schedules":
+        excluded += [
+            "timezone",
+            "timezone_revision",
+            "timezone_effective_after",
+            "schedule_cursor",
+            "schedule_effective_after",
+            "schedule_state",
+            "schedule_timezone_revision",
+        ]
     if source_migration == "0013_device_automations":
         excluded += ["numeric_observed_at", "numeric_watermarks", "threshold_state"]
     excluded_sql = ",".join("'" + name + "'" for name in excluded)
     tables = profile.query(
-        "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename != 'alembic_version' ORDER BY tablename"
+        "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename NOT IN ('alembic_version','scene_run_waits') ORDER BY tablename"
     ).splitlines()
     result = {}
     for table in tables:
@@ -599,7 +637,7 @@ def validate_source_checkout(path):
     ).strip()
     if head not in SUPPORTED_UPGRADE_SOURCES or dirty:
         raise ValueError(
-            "Use an exact clean supported Core #42, #50 or #52 source checkout"
+            "Use an exact clean supported Core #42, #50, #52 or #54 source checkout"
         )
     return path
 
@@ -626,7 +664,7 @@ def migrate_upgrade(profile, source_migration=SOURCE_MIGRATION):
         raise ValueError("Upgrade changed existing data")
     if source_migration == SOURCE_MIGRATION:
         validate_migrated_metadata(profile)
-    if source_migration != "0014_numeric_thresholds":
+    if source_migration not in {"0014_numeric_thresholds", "0015_house_schedules"}:
         for table, column in (
             ("devices", "numeric_observed_at"),
             ("devices", "numeric_watermarks"),
@@ -640,19 +678,30 @@ def migrate_upgrade(profile, source_migration=SOURCE_MIGRATION):
             ):
                 raise ValueError("Unexpected initialized numeric metadata")
 
+    if source_migration != "0015_house_schedules":
+        for table, predicate in [
+            (
+                "houses",
+                "timezone IS NOT NULL OR timezone_revision != 1 OR timezone_effective_after IS NOT NULL OR schedule_cursor IS NOT NULL",
+            ),
+            (
+                "automations",
+                "schedule_effective_after IS NOT NULL OR schedule_state::text != '{}'",
+            ),
+            ("scene_runs", "schedule_timezone_revision IS NOT NULL"),
+        ]:
+            if profile.query(f"SELECT count(*) FROM {table} WHERE {predicate}") != "0":
+                raise ValueError("Unexpected initialized schedule metadata")
     for table, predicate in [
         (
-            "houses",
-            "timezone IS NOT NULL OR timezone_revision != 1 OR timezone_effective_after IS NOT NULL OR schedule_cursor IS NOT NULL",
+            "scene_runs",
+            "durable_plan OR wait_position IS NOT NULL OR wait_checked_at IS NOT NULL OR cancelled_at IS NOT NULL",
         ),
-        (
-            "automations",
-            "schedule_effective_after IS NOT NULL OR schedule_state::text != '{}'",
-        ),
-        ("scene_runs", "schedule_timezone_revision IS NOT NULL"),
+        ("scene_run_actions", "dispatch_before IS NOT NULL"),
+        ("scene_run_waits", "true"),
     ]:
         if profile.query(f"SELECT count(*) FROM {table} WHERE {predicate}") != "0":
-            raise ValueError("Unexpected initialized schedule metadata")
+            raise ValueError("Unexpected initialized durable wait metadata")
 
 
 def validate_migrated_metadata(profile):
@@ -702,8 +751,17 @@ def _restore(source, destination, *, upgrading, source_version=None):
         raise ValueError("Symlink backup refused")
     manifest = json.loads((source / "manifest.json").read_text())
     expected = set((*FILES, "database.dump"))
-    if manifest.get("format") != 1 or set(manifest.get("sha256", {})) != expected:
+    expected_format = 1 if upgrading else 2
+    if (
+        manifest.get("format") != expected_format
+        or set(manifest.get("sha256", {})) != expected
+    ):
         raise ValueError("Invalid backup manifest")
+    if not upgrading:
+        sys.path.insert(0, str(CORE))
+        from tools.restore_policy import validate_fingerprint_manifest
+
+        validate_fingerprint_manifest(manifest.get("database"))
     contents = {}
     for name in expected:
         item = source / name
@@ -780,6 +838,20 @@ def _restore(source, destination, *, upgrading, source_version=None):
                 raise ValueError("Unsupported source migration")
             migrate_upgrade(profile, source_migration=source_version[2])
         profile.verify_database()
+        # Exact full equality precedes the intentional NEW-copy-only policy.
+        if not upgrading and profile_fingerprints(profile) != manifest.get("database"):
+            raise ValueError("Restored data differs from complete backup fingerprints")
+        sys.path.insert(0, str(CORE))
+        from sqlalchemy import create_engine
+        from tools.restore_policy import invalidate_restored_waits
+
+        engine = create_engine(profile._open_pg())
+        try:
+            with engine.begin() as connection:
+                policy = invalidate_restored_waits(connection)
+        finally:
+            engine.dispose()
+        private_write(target / "restore-policy.json", json.dumps(policy))
         private_write(target / "seeded", "1")
     finally:
         profile.stop()

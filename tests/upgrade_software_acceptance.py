@@ -198,6 +198,64 @@ def assert_no_numeric_replay(http, profile, stamps, counts):
     )
 
 
+def seed_schedule_source(http, source):
+    from datetime import datetime, UTC, timedelta
+
+    house = http.get("/core-api/houses/fixture_house").json()
+    zone = http.patch(
+        "/core-api/houses/fixture_house",
+        json={
+            "timezone": "UTC",
+            "expected_timezone_revision": house["timezone_revision"],
+        },
+    )
+    assert zone.status_code == 200, zone.text
+    now = datetime.now(UTC)
+    occurrence = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    if (occurrence - now).total_seconds() < 8:
+        occurrence += timedelta(minutes=1)
+    response = http.post(
+        "/core-api/automations",
+        json=dict(
+            id="source54_schedule",
+            name="Preserve schedule",
+            house_id="fixture_house",
+            enabled=True,
+            trigger=dict(
+                type="schedule",
+                time=occurrence.strftime("%H:%M"),
+                weekdays=[occurrence.weekday()],
+            ),
+            conditions=[],
+            actions=[
+                dict(
+                    type="device_state", device_id="fixture_relay", state={"on": False}
+                )
+            ],
+        ),
+    )
+    assert response.status_code == 201, response.text
+    deadline = time.monotonic() + (occurrence - now).total_seconds() + 20
+    while time.monotonic() < deadline:
+        rows = http.get("/core-api/automations/source54_schedule/runs").json()
+        if (
+            rows
+            and rows[0]["status"] == "succeeded"
+            and source.query(
+                "SELECT execution_finished AND execution_error IS NULL FROM scene_runs WHERE scene_id='source54_schedule'"
+            )
+            == "t"
+        ):
+            break
+        time.sleep(0.2)
+    assert len(rows) == 1 and rows[0]["status"] == "succeeded", rows
+    assert rows[0]["actions"][0]["receipt"]["ack_status"] == "applied"
+    print(
+        "PASS source54 real scheduled receipt/checkpoint seeded for exact preservation",
+        flush=True,
+    )
+
+
 def main():
     assert os.environ.get("GITHUB_ACTIONS") == "true"
     web, old_core, old_web = map(lambda p: Path(p).resolve(), sys.argv[1:])
@@ -282,6 +340,7 @@ def main():
             if source_migration in {
                 "0013_device_automations",
                 "0014_numeric_thresholds",
+                "0015_house_schedules",
             }:
                 assert (
                     http.put(
@@ -315,8 +374,10 @@ def main():
                 )
                 assert kept.status_code == 201
 
-            if source_migration == "0014_numeric_thresholds":
+            if source_migration in {"0014_numeric_thresholds", "0015_house_schedules"}:
                 numeric_stamps = seed_numeric_source(http, source)
+            if source_migration == "0015_house_schedules":
+                seed_schedule_source(http, source)
 
             cli(
                 old_core,
