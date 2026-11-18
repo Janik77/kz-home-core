@@ -1,39 +1,25 @@
-# Numeric integration candidate
+# Единая программная сборка KZ Home
 
-Runtime Core #51 `1ae52afa22431943064b5e85313f671b073b9458`,
-Web #29 candidate `74b7238f10a9e56cbc600f9cac21b29a5c15b46e`,
-schema `0014_numeric_thresholds`; tooling `integration/numeric-web29`.
+Кандидат расписаний: Core runtime `45b63628829580bc564ff2490af645951926e82e`,
+Web `96c953f40f3a8eff464e2b57b5e7817456569206`,
+tooling `baf879533f7591ff88e8052ce8adf64fbc3770b8`, schema `0015_house_schedules`.
+Новая integration ветка `integration/schedule-web30`, без merge в main.
 
-Use existing launcher, not a second stack implementation:
-`python tools/run_software_stack.py --help` for disposable preview;
-`python tools/durable_software.py --help` for persistent software profiles.
-Source50 backup to NEW target transfer and original-profile rollback:
-[SOFTWARE_UPGRADE.md](SOFTWARE_UPGRADE.md). Never edit existing profile bindings.
-Acceptance pending until exact integration CI succeeds. Software emulation only.
+**Одна актуальная инструкция:** [проверка окружения, backup, новое назначение,
+запуск, проверка и rollback](SOFTWARE_UPGRADE.md).
+Не изменять постоянный стенд сейчас: квалификация выполняется только в CI.
+Исходные профили #42/#50/#52 и их точные версии перечислены там же.
 
----
-## Historical Web28 integration
+Состав: существующий React Web, FastAPI Core, PostgreSQL, MQTT TLS,
+программное реле, подтверждённые команды/сцены, numeric thresholds и
+расписания в явно выбранной IANA timezone дома. Перезапуск не воспроизводит
+пропущенные расписания или неизвестные команды. Отложенные действия между
+шагами ещё не реализованы этим этапом.
 
-# KZ Home: единая программная версия с Web #28
+Статусы различать: визуальная готовность Web; работа с реальным Core и
+программным MQTT; проверка на физическом устройстве. Последняя не выполнялась.
+Адрес предпросмотра зависит от реально запущенного launcher, не является production.
+Полная готовность подтверждается только отчётом с exact integration SHA,
+зелёными CI, браузерными проверками и видео. Этот документ не заменяет отчёт.
 
-Отдельная ветка `integration/web28-persistent` поверх Core #49.
-Runtime `f6a0826929c87b39dec7e81d22280f1218bf18f1` не изменён.
-Web `6f8f72f86f668b53f85c13054644c80427fe9eab` (#28), схема `0013_device_automations`.
-Точный tooling SHA брать из отчёта/PR после прохождения всех четырёх workflows на нём.
-
-Единственная инструкция: [SOFTWARE_UPGRADE.md](SOFTWARE_UPGRADE.md).
-Используются проверенные свободные существующие checkout, без повторного clone.
-Новый профиль сохраняется при stop/start, backup и exact-version restore.
-Foreground запуск, не supervisor: штатная остановка Ctrl-C в его терминале.
-
-Тесты включают настоящие PostgreSQL/MQTT TLS, программное реле, браузер,
-ACK + state, неизвестный исход после SIGKILL без replay, сохранение automation
-history/receipts и комнат/сцен/favorites при backup/restore. Считать их пройденными
-только по зелёным CI на точном integration SHA; старые результаты #49 не заменяют новые.
-
-Старый профиль не изменяется. Upgrade поддерживает только документированный
-source42/schema0010, не произвольный профиль Web27/0011/0012. Ручное редактирование
-служебных привязок запрещено. На ПК владельца версия не установлена этой работой.
-Физическое оборудование не проверено; main/production не изменены.
-
-Scope: [AUTOMATIONS_SOFTWARE_SLICE.md](AUTOMATIONS_SOFTWARE_SLICE.md).
+[Историческая сборка numeric #52](https://github.com/Janik77/kz-home-core/blob/244549d3cd6b5b2c5b7bc9757e438d2729553155/docs/UNIFIED_SOFTWARE_MVP.md)

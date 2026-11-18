@@ -28,7 +28,7 @@ def digest(path):
     }
 
 
-def sample(profile, value, stamp=None):
+def sample(profile, value, stamp=None, *, field="illuminance"):
     stamp = stamp or datetime.now(UTC).isoformat()
 
     async def send():
@@ -51,7 +51,7 @@ def sample(profile, value, stamp=None):
                     {
                         "timestamp": stamp,
                         "correlation_id": str(uuid4()),
-                        "state": {"illuminance": value},
+                        "state": {field: value},
                     }
                 ),
                 qos=1,

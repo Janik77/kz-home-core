@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from uuid import uuid4
 
 import httpx
@@ -131,6 +132,72 @@ def marker_failure_cases(backup, root, web, docker, profiles, *, old_core=None):
     )
 
 
+def seed_numeric_source(http, source):
+    """Actual numeric reports + receipt on old runtime, never invented persisted rows."""
+    from numeric_profile_acceptance import sample
+
+    response = http.patch(
+        "/core-api/devices/fixture_relay",
+        json={"capabilities": ["on_off", "illuminance", "temperature", "humidity"]},
+    )
+    assert response.status_code == 200
+    response = http.post(
+        "/core-api/automations",
+        json={
+            "id": "numeric_backup_rule",
+            "house_id": "fixture_house",
+            "name": "Preserve numeric history",
+            "enabled": True,
+            "trigger": {
+                "type": "numeric_threshold",
+                "device_id": "fixture_relay",
+                "field": "illuminance",
+                "operator": "lt",
+                "value": 100,
+                "hysteresis": 20,
+            },
+            "conditions": [],
+            "actions": [
+                {
+                    "type": "device_state",
+                    "device_id": "fixture_relay",
+                    "state": {"on": True},
+                }
+            ],
+        },
+    )
+    assert response.status_code == 201
+    sample(source, 22.5, field="temperature")
+    sample(source, 46, field="humidity")
+    old, low = sample(source, 120), sample(source, 90)
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        rows = http.get("/core-api/automations/numeric_backup_rule/runs").json()
+        if rows and rows[0]["status"] == "succeeded":
+            break
+        time.sleep(0.1)
+    assert len(rows) == 1 and rows[0]["status"] == "succeeded", rows
+    assert rows[0]["actions"][0]["receipt"]["ack_status"] == "applied"
+    return old, low
+
+
+def assert_no_numeric_replay(http, profile, stamps, counts):
+    from numeric_profile_acceptance import sample
+
+    assert profile.query("SELECT count(*) FROM device_commands") == counts
+    sample(profile, 120, stamps[0])
+    sample(profile, 90, stamps[1])
+    sample(profile, 80)
+    time.sleep(0.5)
+    assert profile.query("SELECT count(*) FROM device_commands") == counts
+    rows = http.get("/core-api/automations/numeric_backup_rule/runs").json()
+    assert len(rows) == 1 and rows[0]["status"] == "succeeded"
+    print(
+        "PASS source52 numeric values/freshness/watermarks/latch/history preserved; no startup/old/duplicate/still-low replay",
+        flush=True,
+    )
+
+
 def main():
     assert os.environ.get("GITHUB_ACTIONS") == "true"
     web, old_core, old_web = map(lambda p: Path(p).resolve(), sys.argv[1:])
@@ -145,6 +212,7 @@ def main():
     before = inventory(docker)
     root = Path(tempfile.mkdtemp(prefix="kzsoft-durable-test-")).resolve()
     process = None
+    numeric_stamps = None
     profiles = []
     try:
         cli(old_core, "init", "--state", root / "source")
@@ -211,7 +279,10 @@ def main():
             assert created.status_code == 201
             run_id = created.json()["id"]
             first_action = dispatch_scene_action(http, run_id, 0, True)["actions"][0]
-            if source_migration == "0013_device_automations":
+            if source_migration in {
+                "0013_device_automations",
+                "0014_numeric_thresholds",
+            }:
                 assert (
                     http.put(
                         "/core-api/v1/houses/fixture_house/me/device-favorites/fixture_relay"
@@ -244,6 +315,9 @@ def main():
                 )
                 assert kept.status_code == 201
 
+            if source_migration == "0014_numeric_thresholds":
+                numeric_stamps = seed_numeric_source(http, source)
+
             cli(
                 old_core,
                 "backup",
@@ -262,6 +336,11 @@ def main():
             "INSERT INTO users (id,email,password_hash,is_active,is_superuser) SELECT 'upgrade-other','other@example.test',password_hash,true,false FROM users WHERE email='owner@example.test'"
         )
         original_rows = manager.legacy_fingerprints(source, source_migration)
+        numeric_counts = source.query("SELECT count(*) FROM device_commands")
+        if numeric_stamps:
+            from numeric_profile_acceptance import numeric_snapshot
+
+            numeric_before = numeric_snapshot(source)
         source.stop()
         cli(
             old_core, "backup", "--state", source.path, "--destination", root / "backup"
@@ -389,6 +468,8 @@ def main():
             == manager.EXPECTED_MIGRATION
         )
         assert manager.legacy_fingerprints(upgraded, source_migration) == original_rows
+        if numeric_stamps:
+            assert numeric_snapshot(upgraded) == numeric_before
         assert (
             upgraded.owner != source.owner
             and upgraded.state["database_identity"] != source.state["database_identity"]
@@ -403,6 +484,8 @@ def main():
         favorites = "/core-api/v1/houses/fixture_house/me/device-favorites"
         with httpx.Client(base_url=url, trust_env=False, timeout=5) as http:
             login(http, upgraded)
+            if numeric_stamps:
+                assert_no_numeric_replay(http, upgraded, numeric_stamps, numeric_counts)
             assert read_run(http, run_id)["actions"][0] == first_action
             completed = dispatch_scene_action(http, run_id, 1, False)
             assert completed["status"] == "succeeded"
