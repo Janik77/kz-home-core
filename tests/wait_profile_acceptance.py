@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
+import subprocess
 import tempfile
 import time
 from uuid import uuid4
@@ -14,6 +15,35 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools import durable_software as manager  # noqa:E402
 from durable_software_acceptance import cleanup, halt, inventory, launch, login  # noqa:E402
 from numeric_profile_acceptance import digest  # noqa:E402
+
+
+def historical_backup(old_core, source_path, backup):
+    """Never import historical backup helpers into the current tooling process."""
+    paths_before = list(sys.path)
+    modules_before = {
+        name: module
+        for name, module in sys.modules.items()
+        if name == "tools" or name.startswith("tools.")
+    }
+    subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            str(old_core / "tools/durable_software.py"),
+            "backup",
+            "--state",
+            str(source_path),
+            "--destination",
+            str(backup),
+        ],
+        check=True,
+    )
+    assert sys.path == paths_before, "Historical backup changed parent import paths"
+    assert {
+        name: module
+        for name, module in sys.modules.items()
+        if name == "tools" or name.startswith("tools.")
+    } == modules_before, "Historical backup leaked modules into current tooling"
 
 
 def main():
@@ -36,11 +66,18 @@ def main():
         source_manager.validate_core()
 
     def restore_copy(backup, target):
-        return (
-            manager.upgrade(backup, target, old_core)
-            if old_core
-            else manager.restore(backup, target)
-        )
+        try:
+            return (
+                manager.upgrade(backup, target, old_core)
+                if old_core
+                else manager.restore(backup, target)
+            )
+        except Exception:
+            # Even an unexpected fixture failure must retain ownership-aware
+            # cleanup of a partial target, without masking the original error.
+            if (target / "profile.json").is_file():
+                profiles.append(manager.Profile(target, docker))
+            raise
 
     docker = manager.Docker()
     before = inventory(docker)
@@ -95,8 +132,14 @@ def main():
             assert first["ack_status"] == "applied" and first["reported_on"] is True
         halt(process)
         process = None
-        with source.lock():
-            backup = source.backup(root / "backup")
+        if old_core:
+            # Run the genuine historical backup in its own interpreter. Loading
+            # old and new tools.restore_policy in one process poisons sys.modules.
+            backup = root / "backup"
+            historical_backup(old_core, source.path, backup)
+        else:
+            with source.lock():
+                backup = source.backup(root / "backup")
         source_files, backup_files = digest(source.path), digest(backup)
         manifest = json.loads((backup / "manifest.json").read_text())
         assert manifest["format"] == 2
@@ -116,8 +159,7 @@ def main():
             ) or "Source backup database fingerprint mismatch" in str(error), str(error)
         else:
             raise AssertionError("False fingerprint accepted")
-        failed = manager.Profile(refused, docker)
-        profiles.append(failed)
+        failed = next(profile for profile in profiles if profile.path == refused)
         assert not (refused / "initialized").exists()
         assert not (refused / "seeded").exists()
         assert not (refused / "restore-policy.json").exists()
