@@ -7,8 +7,8 @@
 | Компонент | Версия |
 |---|---|
 | Core runtime, PR #59 | `1a43ecba1cd07dd231f313fcd42d4d4276e13967` |
-| Web, PR #33 (временный pin до compact UX) | `e6372058acaab7d1980b39adef37efb8e7f198b3` |
-| Исполняемый tooling | Кандидат `integration/scene-copy-web33`; exact SHA фиксируется после окончательного Web |
+| Web, PR #33, compact UX | `36515bdcb003e875108dd722febe5c969825f304` |
+| Исполняемый tooling | `8073789efa06db6962725c88be54a1f86ba964c2` |
 | Схема | `0018_scene_drafts` |
 
 Tooling проверяет равенство runtime-файлов указанному SHA. Итоговый отчёт должен отдельно назвать проверенный integration SHA и реальные результаты CI/браузера. Последующая документация не меняет исполняемый tooling.
