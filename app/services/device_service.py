@@ -74,10 +74,18 @@ class DeviceService:
         if "room_id" in values and self.rooms.house_id(values["room_id"]) != target:
             raise ConflictError("Target location changed concurrently; retry")
         if physical.by_device(device_id, lock=True) is not None:
-            if set(data.model_fields_set) - {"name", "room_id"}:
+            if set(data.model_fields_set) - {"name", "room_id", "expected_metadata_revision"}:
                 raise ConflictError("Physical devices allow only name and room edits")
         if "room_id" in values:
             self._validate_room(values["room_id"])
+        # Configuration validation and its SQL write must see one locked state,
+        # not a cached pre-heartbeat device snapshot.
+        from sqlalchemy import select
+        from app.models import DeviceORM
+        self.repository.session.scalar(
+            select(DeviceORM).where(DeviceORM.id == device_id).with_for_update()
+            .execution_options(populate_existing=True)
+        )
         if "state" in values or "capabilities" in values:
             current = self.get(device_id)
             self.state_validator._validate_values(values.get("state", current.state))
@@ -270,12 +278,24 @@ class DeviceService:
     async def update_status(
         self, house_id: str, device_id: str, online: bool, last_seen: Any
     ) -> bool:
-        device = self.require_house(house_id, device_id, lock=True)
-        changed = device.online != online
-        metadata = {**device.metadata, "last_seen": last_seen.isoformat()}
+        from sqlalchemy import select
+        from app.models import DeviceORM
+
+        self.require_house(house_id, device_id, lock=True)
+        session = self.repository.session
+        # Lock and refresh once; never merge telemetry into a stale metadata dict
+        # or release the lock between freshness reset and last_seen persistence.
+        entity = session.scalar(
+            select(DeviceORM).where(DeviceORM.id == device_id).with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        self.require_house(house_id, device_id, lock=True)
+        changed = entity.online != online
+        entity.metadata_ = {**entity.metadata_, "last_seen": last_seen.isoformat()}
+        entity.online = online
         if not online:
-            self.repository.update(device_id, {"numeric_observed_at": {}})
-        self.repository.update(device_id, {"online": online, "metadata": metadata})
+            entity.numeric_observed_at = {}
+        self.repository._commit()
         return changed
 
     def _validate_room(self, room_id: str) -> None:
@@ -289,6 +309,7 @@ class DeviceService:
         return DeviceRead.model_validate(
             {
                 "id": entity.id,
+                "metadata_revision": entity.metadata_revision,
                 "name": entity.name,
                 "room_id": entity.room_id,
                 "type": entity.type,

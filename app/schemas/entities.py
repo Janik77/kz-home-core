@@ -62,7 +62,23 @@ class HouseCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
 
 
-class HouseUpdate(BaseModel):
+class MetadataUpdate(BaseModel):
+    expected_metadata_revision: int | None = Field(
+        default=None, ge=1, le=2147483646, strict=True
+    )
+
+    @model_validator(mode="after")
+    def metadata_cas(self):
+        fields = self.model_fields_set - {
+            "expected_metadata_revision", "timezone", "expected_timezone_revision",
+            "state", "online",
+        }
+        if fields and self.expected_metadata_revision is None:
+            raise ValueError("metadata edit requires expected_metadata_revision")
+        return self
+
+
+class HouseUpdate(MetadataUpdate):
     timezone: str | None = Field(default=None, max_length=128)
     expected_timezone_revision: int | None = Field(default=None, ge=1, strict=True)
     _timezone = field_validator("timezone")(valid_timezone)
@@ -80,6 +96,7 @@ class HouseUpdate(BaseModel):
 
 
 class HouseRead(HouseCreate, ReadSchema):
+    metadata_revision: int = Field(ge=1)
     timezone_revision: int = Field(ge=1)
 
 
@@ -90,13 +107,14 @@ class FloorCreate(BaseModel):
     order: int
 
 
-class FloorUpdate(BaseModel):
+class FloorUpdate(MetadataUpdate):
     house_id: str | None = None
     name: str | None = Field(default=None, min_length=1, max_length=255)
     order: int | None = None
 
 
 class FloorRead(FloorCreate, ReadSchema):
+    metadata_revision: int = Field(ge=1)
     pass
 
 
@@ -107,13 +125,14 @@ class RoomCreate(BaseModel):
     icon: str | None = None
 
 
-class RoomUpdate(BaseModel):
+class RoomUpdate(MetadataUpdate):
     floor_id: str | None = None
     name: str | None = Field(default=None, min_length=1, max_length=255)
     icon: str | None = None
 
 
 class RoomRead(RoomCreate, ReadSchema):
+    metadata_revision: int = Field(ge=1)
     pass
 
 
@@ -128,7 +147,7 @@ class DeviceCreate(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class DeviceUpdate(BaseModel):
+class DeviceUpdate(MetadataUpdate):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     room_id: str | None = None
     type: DeviceType | None = None
@@ -139,6 +158,7 @@ class DeviceUpdate(BaseModel):
 
 
 class DeviceRead(DeviceCreate, ReadSchema):
+    metadata_revision: int = Field(ge=1)
     numeric_observed_at: dict[str, str | None] = Field(default_factory=dict)
 
 

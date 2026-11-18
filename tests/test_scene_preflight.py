@@ -135,7 +135,7 @@ def test_each_dispatch_rechecks_after_preflight(scene_stack):
 
     async def mutate_after_first_publish(*args, **kwargs):
         if wire.send_command.await_count == 1:
-            devices.repository.update("living_room_curtain", {"capabilities": []})
+            devices.repository.update("living_room_curtain", {"capabilities": [], "expected_metadata_revision": devices.repository.get("living_room_curtain").metadata_revision})
 
     wire.send_command.side_effect = mutate_after_first_publish
     with pytest.raises(InvalidReferenceError, match="Unsupported"):

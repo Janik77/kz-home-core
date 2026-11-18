@@ -34,6 +34,7 @@ AUTOMATION_HEAD = "0013_device_automations"
 NUMERIC_HEAD = "0014_numeric_thresholds"
 SCHEDULE_HEAD = "0015_house_schedules"
 WAIT_HEAD = "0016_durable_waits"
+METADATA_HEAD = "0017_metadata_cas"
 PREVIOUS = "0003_auth_foundation"
 
 
@@ -47,9 +48,10 @@ def migration_config(connection=None):
 
 def test_migration_chain_has_one_head():
     scripts = ScriptDirectory.from_config(migration_config())
-    assert scripts.get_heads() == [WAIT_HEAD]
+    assert scripts.get_heads() == [METADATA_HEAD]
     revisions = list(scripts.walk_revisions())
     assert [revision.revision for revision in revisions] == [
+        METADATA_HEAD,
         WAIT_HEAD,
         SCHEDULE_HEAD,
         NUMERIC_HEAD,
@@ -68,6 +70,7 @@ def test_migration_chain_has_one_head():
         "0001_initial",
     ]
     assert [revision.down_revision for revision in revisions] == [
+        WAIT_HEAD,
         SCHEDULE_HEAD,
         NUMERIC_HEAD,
         AUTOMATION_HEAD,
@@ -134,7 +137,7 @@ def verify_upgrade(connection, from_previous):
         old_id = insert_event(connection, "a" * 36)
     command.upgrade(config, "head")
     assert (
-        connection.scalar(text("SELECT version_num FROM alembic_version")) == WAIT_HEAD
+        connection.scalar(text("SELECT version_num FROM alembic_version")) == METADATA_HEAD
     )
     assert_column(connection, 128)
     assert EventLogORM.__table__.c.correlation_id.type.length == 128

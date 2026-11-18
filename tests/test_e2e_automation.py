@@ -161,7 +161,11 @@ def test_conflicting_provisioning_is_not_overwritten(
     async def check():
         async with stack(tmp_path, monkeypatch) as (api, *_):
             await provision(api)
-            await api.request("PATCH", path, patch)
+            body = dict(patch)
+            if path.startswith("/devices/"):
+                current = await api.request("GET", path)
+                body["expected_metadata_revision"] = current["metadata_revision"]
+            await api.request("PATCH", path, body)
             with pytest.raises(Failure, match="incompatible"):
                 await provision(api)
             current = await api.request("GET", path)

@@ -215,7 +215,7 @@ def main():
             assert http.get("/").status_code == 200
             response = http.patch(
                 "/core-api/houses/fixture_house",
-                json={"name": "Persistent house settings"},
+                json={"name": "Persistent house settings", "expected_metadata_revision": http.get("/core-api/houses/fixture_house").json()["metadata_revision"]},
             )
             assert response.status_code == 200
             response = http.post(
@@ -497,7 +497,7 @@ def main():
             assert read_run(http, run_id) == completed_run
             command(http, False)
             response = http.patch(
-                "/core-api/rooms/saved_room", json={"name": "Restored copy only"}
+                "/core-api/rooms/saved_room", json={"name": "Restored copy only", "expected_metadata_revision": http.get("/core-api/rooms/saved_room").json()["metadata_revision"]}
             )
             assert response.status_code == 200
         halt(process)

@@ -502,7 +502,7 @@ def test_physical_profile_observed_state_and_metadata_cannot_be_overwritten(
     claim_device(onboarding)
     assert (
         client.patch(
-            "/devices/physical1", json=values, headers=headers["installer"]
+            "/devices/physical1", json={**values, "expected_metadata_revision": client.get("/devices/physical1", headers=headers["installer"]).json()["metadata_revision"]}, headers=headers["installer"]
         ).status_code
         == 409
     )
@@ -526,7 +526,7 @@ def test_existing_crud_cannot_transfer_physical_binding(onboarding, kind, body):
     client, _, headers, *_ = onboarding
     claim_device(onboarding)
     assert (
-        client.patch("/" + kind, json=body, headers=headers["both"]).status_code == 409
+        client.patch("/" + kind, json={**body, "expected_metadata_revision": client.get("/" + kind, headers=headers["both"]).json()["metadata_revision"]}, headers=headers["both"]).status_code == 409
     )
     assert client.get(BASE, headers=headers["owner"]).json()["house_id"] == "a"
 
@@ -547,13 +547,13 @@ def test_same_house_location_and_name_changes_are_allowed(onboarding):
     claim_device(onboarding)
     assert (
         client.patch(
-            "/rooms/ra", json={"floor_id": "fa2"}, headers=headers["owner"]
+            "/rooms/ra", json={"floor_id": "fa2", "expected_metadata_revision": client.get("/rooms/ra", headers=headers["owner"]).json()["metadata_revision"]}, headers=headers["owner"]
         ).status_code
         == 200
     )
     result = client.patch(
         "/devices/physical1",
-        json={"room_id": "ra2", "name": "Kitchen"},
+        json={"room_id": "ra2", "name": "Kitchen", "expected_metadata_revision": client.get("/devices/physical1", headers=headers["installer"]).json()["metadata_revision"]},
         headers=headers["installer"],
     )
     assert result.status_code == 200 and result.json()["name"] == "Kitchen"

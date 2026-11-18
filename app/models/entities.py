@@ -31,6 +31,9 @@ class TimestampMixin:
 
 
 class HouseORM(TimestampMixin, Base):
+    metadata_revision: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
     timezone: Mapped[str | None] = mapped_column(String(128), nullable=True)
     timezone_revision: Mapped[int] = mapped_column(
         Integer, default=1, server_default="1"
@@ -99,6 +102,9 @@ class RefreshSessionORM(Base):
 
 
 class FloorORM(TimestampMixin, Base):
+    metadata_revision: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
     __tablename__ = "floors"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     house_id: Mapped[str] = mapped_column(
@@ -113,6 +119,9 @@ class FloorORM(TimestampMixin, Base):
 
 
 class RoomORM(TimestampMixin, Base):
+    metadata_revision: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
     __tablename__ = "rooms"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     floor_id: Mapped[str] = mapped_column(
@@ -127,6 +136,9 @@ class RoomORM(TimestampMixin, Base):
 
 
 class DeviceORM(TimestampMixin, Base):
+    metadata_revision: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
     numeric_observed_at: Mapped[dict[str, Any]] = mapped_column(
         JsonType, default=dict, server_default="{}"
     )

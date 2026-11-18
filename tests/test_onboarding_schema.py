@@ -51,12 +51,12 @@ def test_onboarding_migration_preserves_existing_devices_and_matches_models(
                     .values(id="house", name="House")
                 )
                 connection.execute(
-                    FloorORM.__table__.insert().values(
+                    Table("floors", MetaData(), autoload_with=connection).insert().values(
                         id="floor", house_id="house", name="Floor", order=0
                     )
                 )
                 connection.execute(
-                    RoomORM.__table__.insert().values(
+                    Table("rooms", MetaData(), autoload_with=connection).insert().values(
                         id="room", floor_id="floor", name="Room"
                     )
                 )

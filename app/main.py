@@ -13,6 +13,7 @@ from app.core.logging import configure_logging
 from app.core.errors import (
     ConflictError,
     DefinitionRevisionConflict,
+    MetadataRevisionConflict,
     EntityNotFoundError,
     InvalidReferenceError,
     UnavailableError,
@@ -276,6 +277,12 @@ def create_app(
     async def definition_conflict_handler(_, error: DefinitionRevisionConflict) -> JSONResponse:
         return JSONResponse(status_code=409, content={
             "detail": str(error), "code": "definition_revision_conflict"
+        })
+
+    @application.exception_handler(MetadataRevisionConflict)
+    async def metadata_conflict_handler(_, error: MetadataRevisionConflict) -> JSONResponse:
+        return JSONResponse(status_code=409, content={
+            "detail": str(error), "code": "metadata_revision_conflict"
         })
 
     @application.exception_handler(ConflictError)

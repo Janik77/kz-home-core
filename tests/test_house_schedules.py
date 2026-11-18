@@ -120,7 +120,7 @@ def test_api_timezone_cas_null_and_disabled_draft(tmp_path, monkeypatch):
             assert response.json()["code"] == "definition_revision_conflict"
             assert (
                 await request(
-                    h, "PATCH", "/houses/fixture_house", json={"name": "Renamed"}
+                    h, "PATCH", "/houses/fixture_house", json={"name": "Renamed", "expected_metadata_revision": (await request(h, "GET", "/houses/fixture_house")).json()["metadata_revision"]}
                 )
             ).status_code == 200
             assert (
