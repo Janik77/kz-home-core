@@ -3,7 +3,7 @@
 Кандидат, не заявление о готовности:
 - Core runtime `af6dcadddcfc2d5bee97da4386021495a54d1f9a`.
 - Web `2ccf4172579563ad5e6cb1b0f4dba4147aada558`.
-- Tooling `f42342a83a1bcc3aa379542f679adc74c307380b`, schema `0016_durable_waits`.
+- Tooling `3efaefd203897eb90753ed8c5239348848451c56`, schema `0016_durable_waits`.
 - Отдельная ветка `integration/durable-wait-web31`, без merge в main.
 
 **Единая инструкция:** [read-only preflight, backup, новое назначение, проверка и rollback](SOFTWARE_UPGRADE.md). Сейчас квалификация только в CI; действующий стенд владельца не изменять.
