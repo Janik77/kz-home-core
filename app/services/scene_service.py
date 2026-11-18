@@ -62,6 +62,8 @@ class SceneService:
     async def run(self, scene_id: str) -> SceneRead:
         scene = self.get(scene_id)
         self._validate(scene)
+        if any(a.type == "durable_wait" for a in scene.actions):
+            raise InvalidReferenceError("Durable waits require server scene execution")
         # Reject already-invalid later actions before any earlier action changes
         # state. This is not a transaction or a promise of eventual completion;
         # update_state still enforces its guards at each actual dispatch.
@@ -81,6 +83,8 @@ class SceneService:
         if not self.houses.exists(scene.house_id):
             raise InvalidReferenceError("House does not exist")
         for action in scene.actions:
+            if action.type == "durable_wait":
+                continue
             if self.devices.repository.house_id(action.device_id) != scene.house_id:
                 raise InvalidReferenceError(
                     "Scene cannot access a device in another house"

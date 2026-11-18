@@ -55,6 +55,7 @@ class SceneExecutor:
                     owner_row = session.get(SceneRunORM, run_id)
                     if owner_row.source_kind == "automation":
                         from app.services.automation_runs import AutomationRunService
+
                         service = AutomationRunService(session, self.transport)
                     else:
                         service = SceneRunService(session, self.transport)
@@ -65,6 +66,13 @@ class SceneExecutor:
                     ready = next((a for a in view.actions if a.status == "ready"), None)
                     if ready is not None:
                         try:
+                            if ready.type == "durable_wait":
+                                from app.services.durable_wait import begin_wait
+
+                                begin_wait(
+                                    service, house_id, run_id, ready.position, token
+                                )
+                                return  # Ownership was durably released; finally cannot finish it.
                             await service.dispatch(
                                 house_id,
                                 run_id,

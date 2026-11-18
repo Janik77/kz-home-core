@@ -33,7 +33,13 @@ __all__ = [
     "RefreshSessionORM",
 ]
 
-from app.models.scene_run import SceneRunORM, SceneRunActionORM, SceneRunReceiptORM
-__all__ += ["SceneRunORM", "SceneRunActionORM", "SceneRunReceiptORM"]
+from app.models.scene_run import (
+    SceneRunORM,
+    SceneRunActionORM,
+    SceneRunReceiptORM,
+    SceneRunWaitORM,
+)
+
+__all__ += ["SceneRunORM", "SceneRunActionORM", "SceneRunReceiptORM", "SceneRunWaitORM"]
 
 __all__ += ["DeviceFavoriteORM"]

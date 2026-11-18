@@ -4,7 +4,7 @@ from datetime import timedelta
 from hashlib import sha256
 from uuid import uuid4
 
-from sqlalchemy import exists, select, update
+from sqlalchemy import exists, select, update, or_, and_
 from sqlalchemy.exc import IntegrityError
 from app.core.errors import (
     ConflictError,
@@ -16,6 +16,7 @@ from app.core.errors import (
 from app.models import (
     SceneRunORM,
     SceneRunActionORM,
+    SceneRunWaitORM,
     DeviceCommandORM,
     SceneRunReceiptORM,
 )
@@ -41,10 +42,34 @@ class SceneRunService:
 
     def lock_definition(self, entity_id):
         from app.models import SceneORM
-        self.session.scalar(select(SceneORM).where(SceneORM.id == entity_id).with_for_update())
+
+        self.session.scalar(
+            select(SceneORM).where(SceneORM.id == entity_id).with_for_update()
+        )
 
     def before_dispatch(self, run):
-        pass
+        if not run.durable_plan:
+            return
+        if (
+            run.cancelled_at is not None
+            or run.execution_finished
+            or run.execution_error
+        ):
+            raise ConflictError("Durable continuation cancelled")
+        definition = self.definition(run.scene_id)
+        if (
+            definition.revision != run.scene_revision
+            or definition.house_id != run.house_id
+        ):
+            raise ConflictError("Durable definition changed")
+        self.require_authority(run.house_id, run.requested_by)
+        for action in self.actions(run.id):
+            if (
+                action.kind == "device_state"
+                and DeviceRepository(self.session).house_id(action.device_id)
+                != run.house_id
+            ):
+                raise ConflictError("Durable plan device moved")
 
     def require_authority(self, house_id, user_id):
         from app.models import UserORM
@@ -83,21 +108,35 @@ class SceneRunService:
 
     def row(self, house_id, run_id):
         row = self.session.scalar(
-            select(SceneRunORM).filter_by(id=run_id, house_id=house_id, source_kind=self.source_kind)
+            select(SceneRunORM).filter_by(
+                id=run_id, house_id=house_id, source_kind=self.source_kind
+            )
         )
         if row is None:
             raise EntityNotFoundError("Resource not found")
         return row
 
     def actions(self, run_id):
-        return list(
+        values = list(
             self.session.scalars(
                 select(SceneRunActionORM)
                 .filter_by(run_id=run_id)
-                .order_by(SceneRunActionORM.position)
                 .execution_options(populate_existing=True)
             )
         )
+        values += list(
+            self.session.scalars(
+                select(SceneRunWaitORM)
+                .filter_by(run_id=run_id)
+                .execution_options(populate_existing=True)
+            )
+        )
+        values.sort(key=lambda action: action.position)
+        if self.session.get(SceneRunORM, run_id).durable_plan and [
+            a.position for a in values
+        ] != list(range(len(values))):
+            raise ConflictError("Run action plan is inconsistent")
+        return values
 
     async def create_server(self, house_id, user_id, key, data, token):
         previous = self.session.scalar(
@@ -119,6 +158,8 @@ class SceneRunService:
         if self.transport is None or not getattr(self.transport, "connected", False):
             raise UnavailableError("MQTT transport unavailable")
         for action in scene.actions:
+            if action.get("type") == "durable_wait":
+                continue
             # Includes software allowlist; no command publication here.
             await self.transport.authorize_command(house_id, action["device_id"])
         return self.create(house_id, user_id, key, data, executor_token=token)
@@ -145,11 +186,21 @@ class SceneRunService:
         if scene.revision != data.expected_revision:
             raise DefinitionRevisionConflict()
         actions = scene.actions
+        from app.services.wait_contract import wait_plan
+
+        try:
+            total_wait = wait_plan(actions)
+        except ValueError as error:
+            raise InvalidReferenceError(str(error)) from error
+        if total_wait and executor_token is None:
+            raise InvalidReferenceError("Durable waits require server scene execution")
         if not 1 <= len(actions) <= 16:
             raise InvalidReferenceError("Scene runs require 1 to 16 relay actions")
         devices = DeviceRepository(self.session)
         guard = PhysicalBindingGuard(PhysicalDeviceRepository(self.session))
         for action in actions:
+            if action.get("type") == "durable_wait":
+                continue
             device = devices.get(action["device_id"])
             if devices.house_id(device.id) != house_id:
                 raise InvalidReferenceError("Scene device belongs to another house")
@@ -174,8 +225,16 @@ class SceneRunService:
                     SceneRunORM.source_kind == self.source_kind,
                     SceneRunORM.execution_mode == "server",
                     SceneRunORM.execution_finished.is_(False),
-                    SceneRunORM.lease_until > self.now(),
-                    lease_predicate(self.session),
+                    or_(
+                        and_(
+                            SceneRunORM.lease_until > self.now(),
+                            lease_predicate(self.session),
+                        ),
+                        and_(
+                            SceneRunORM.wait_position.is_not(None),
+                            deadline_predicate(self.session),
+                        ),
+                    ),
                 )
                 .limit(1)
             )
@@ -189,6 +248,8 @@ class SceneRunService:
             ):
                 raise UnavailableError("MQTT transport is unavailable")
             for action in actions:
+                if action.get("type") == "durable_wait":
+                    continue
                 device = devices.get(action["device_id"])
                 if not device.online:
                     raise ConflictError("Scene contains an offline device")
@@ -206,7 +267,19 @@ class SceneRunService:
             scene_id=scene.id,
             scene_revision=scene.revision,
             created_at=now,
-            dispatch_deadline=now + timedelta(minutes=5),
+            dispatch_deadline=now
+            + (
+                timedelta(
+                    seconds=total_wait
+                    + 30
+                    * sum(
+                        a.get("type", "device_state") == "device_state" for a in actions
+                    )
+                )
+                if total_wait
+                else timedelta(minutes=5)
+            ),
+            durable_plan=bool(total_wait),
             execution_mode="server" if executor_token else "manual",
             executor_token=executor_token,
             lease_until=now + timedelta(seconds=30) if executor_token else None,
@@ -216,18 +289,26 @@ class SceneRunService:
         self.session.add(row)
         try:
             self.session.flush()
-            self.session.add_all(
-                [
-                    SceneRunActionORM(
-                        run_id=row.id,
-                        position=i,
-                        device_id=a["device_id"],
-                        requested_on=a["state"]["on"],
-                        claimed=False,
+            for i, action in enumerate(actions):
+                if action.get("type") == "durable_wait":
+                    self.session.add(
+                        SceneRunWaitORM(
+                            run_id=row.id, position=i, seconds=action["seconds"]
+                        )
                     )
-                    for i, a in enumerate(actions)
-                ]
-            )
+                else:
+                    self.session.add(
+                        SceneRunActionORM(
+                            run_id=row.id,
+                            position=i,
+                            device_id=action["device_id"],
+                            requested_on=action["state"]["on"],
+                            claimed=False,
+                            dispatch_before=now + timedelta(seconds=30)
+                            if total_wait and i == 0
+                            else None,
+                        )
+                    )
             self.session.commit()
         except IntegrityError:
             self.session.rollback()
@@ -251,6 +332,7 @@ class SceneRunService:
         interrupted = (
             run.execution_mode == "server"
             and not run.execution_finished
+            and run.wait_position is None
             and (run.lease_until is None or utc(run.lease_until) <= self.now())
         )
         execution_error = run.execution_error or (
@@ -272,6 +354,16 @@ class SceneRunService:
             CommandRepository(self.session), self.transport, now=self.now
         )
         for action in self.actions(run_id):
+            if action.kind == "durable_wait":
+                from app.services.durable_wait import wait_action_view
+
+                result = wait_action_view(
+                    run, action, predecessor_ok, expired, interrupted, self.now()
+                )
+                results.append(result)
+                predecessor_ok = predecessor_ok and result.status == "completed"
+                stopped = stopped or result.status in {"cancelled", "expired"}
+                continue
             # The link is committed atomically with command intent before publish.
             link = self.session.get(SceneRunReceiptORM, (run_id, action.position))
             receipt = (
@@ -301,7 +393,22 @@ class SceneRunService:
                     else "dispatch_unknown"
                 )
             elif stopped or expired or interrupted or run.execution_error:
-                status = "skipped"
+                status = (
+                    (
+                        "expired"
+                        if expired
+                        or run.execution_error
+                        in {"wait_expired", "wait_clock_reversed"}
+                        else "cancelled"
+                    )
+                    if run.durable_plan and not interrupted
+                    else "skipped"
+                )
+            elif (
+                action.dispatch_before is not None
+                and utc(action.dispatch_before) <= self.now()
+            ):
+                status, failure = "expired", "dispatch_window_elapsed"
             else:
                 status = "ready" if predecessor_ok else "waiting"
             results.append(
@@ -320,9 +427,11 @@ class SceneRunService:
                 "failed",
                 "timed_out",
                 "dispatch_unknown",
+                "expired",
+                "cancelled",
             }
         statuses = {a.status for a in results}
-        if statuses == {"applied"}:
+        if statuses and statuses <= {"applied", "completed"}:
             status = "succeeded"
         elif "dispatch_unknown" in statuses:
             status = "unknown"
@@ -354,7 +463,40 @@ class SceneRunService:
                 status = "partial" if "applied" in statuses else "expired"
             else:
                 status = "running"
+        waiting = (
+            self.session.get(SceneRunWaitORM, (run.id, run.wait_position))
+            if run.wait_position is not None
+            else None
+        )
+        if run.durable_plan:
+            if run.cancelled_at is not None:
+                status = "cancelled"
+            elif (
+                "expired" in statuses
+                or run.execution_error in {"wait_expired", "wait_clock_reversed"}
+                or (
+                    waiting
+                    and waiting.due_at
+                    and self.now() >= utc(waiting.due_at) + timedelta(seconds=30)
+                )
+            ):
+                status = "expired"
+            elif (
+                waiting
+                and not run.execution_finished
+                and not run.execution_error
+                and not expired
+            ):
+                status = "waiting"
         return SceneRunRead(
+            plan_deadline=utc(run.dispatch_deadline) if run.durable_plan else None,
+            wait_due_at=utc(waiting.due_at)
+            if waiting and waiting.due_at and status == "waiting"
+            else None,
+            resume_deadline=utc(waiting.due_at) + timedelta(seconds=30)
+            if waiting and waiting.due_at and status == "waiting"
+            else None,
+            cancelled_at=utc(run.cancelled_at) if run.cancelled_at else None,
             id=run.id,
             house_id=house_id,
             scene_id=run.scene_id,
@@ -380,7 +522,7 @@ class SceneRunService:
             self.before_dispatch(run)
             from app.services.scene_run_admission import require_deadline
 
-            require_deadline(self.session, run_id, self.now())
+            require_deadline(self.session, run_id, self.now(), position)
         view = self.get(house_id, run_id)
         if position < 0 or position >= len(view.actions):
             raise EntityNotFoundError("Resource not found")

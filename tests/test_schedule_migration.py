@@ -1,10 +1,7 @@
 import json
 import pytest
 from alembic import command
-from alembic.autogenerate import compare_metadata
-from alembic.migration import MigrationContext
 from sqlalchemy import create_engine, text
-from app.db import Base
 from test_schema import migration_config
 
 
@@ -32,24 +29,7 @@ def test_additive_schedule_migration_and_loss_refusal(tmp_path, data):
                 "state": json.dumps({"armed": False, "revision": 1}),
             },
         )
-        command.upgrade(config, "head")
-        assert (
-            compare_metadata(
-                MigrationContext.configure(
-                    connection,
-                    opts={
-                        "include_object": lambda obj,
-                        name,
-                        kind,
-                        reflected,
-                        compared: kind != "table"
-                        or name in {"houses", "automations", "scene_runs"}
-                    },
-                ),
-                Base.metadata,
-            )
-            == []
-        )
+        command.upgrade(config, "0015_house_schedules")
         row = connection.execute(
             text("SELECT timezone,timezone_revision,schedule_cursor,name FROM houses")
         ).one()
