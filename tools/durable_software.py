@@ -838,9 +838,6 @@ def _restore(source, destination, *, upgrading, source_version=None):
                 raise ValueError("Unsupported source migration")
             migrate_upgrade(profile, source_migration=source_version[2])
         profile.verify_database()
-        # Exact full equality precedes the intentional NEW-copy-only policy.
-        if not upgrading and profile_fingerprints(profile) != manifest.get("database"):
-            raise ValueError("Restored data differs from complete backup fingerprints")
         sys.path.insert(0, str(CORE))
         from sqlalchemy import create_engine
         from tools.restore_policy import invalidate_restored_waits
@@ -848,7 +845,10 @@ def _restore(source, destination, *, upgrading, source_version=None):
         engine = create_engine(profile._open_pg())
         try:
             with engine.begin() as connection:
-                policy = invalidate_restored_waits(connection)
+                policy = invalidate_restored_waits(
+                    connection,
+                    expected_before=None if upgrading else manifest["database"],
+                )
         finally:
             engine.dispose()
         private_write(target / "restore-policy.json", json.dumps(policy))

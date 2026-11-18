@@ -78,6 +78,33 @@ def main():
         source_files, backup_files = digest(source.path), digest(backup)
         manifest = json.loads((backup / "manifest.json").read_text())
         assert manifest["format"] == 2
+        # A structurally valid but false fingerprint must fail before policy/audit
+        # or completion markers, even with an intact SQL archive and file hashes.
+        bad_backup = root / "bad-fingerprint-backup"
+        shutil.copytree(backup, bad_backup)
+        bad_manifest = json.loads((bad_backup / "manifest.json").read_text())
+        bad_manifest["database"]["scene_runs"]["sha256"] = "a" * 64
+        (bad_backup / "manifest.json").write_text(json.dumps(bad_manifest))
+        refused = root / "refused-fingerprint"
+        try:
+            manager.restore(bad_backup, refused)
+        except ValueError as error:
+            assert "differs from complete backup fingerprints" in str(error), str(error)
+        else:
+            raise AssertionError("False fingerprint accepted")
+        failed = manager.Profile(refused, docker)
+        profiles.append(failed)
+        assert not (refused / "initialized").exists()
+        assert not (refused / "seeded").exists()
+        assert not (refused / "restore-policy.json").exists()
+        failed._open_pg()
+        assert (
+            failed.query(
+                "SELECT count(*) FROM scene_runs WHERE cancelled_at IS NOT NULL"
+            )
+            == "0"
+        )
+        failed.stop()
         target = manager.restore(backup, root / "target")
         profiles.append(target)
         audit = json.loads((target.path / "restore-policy.json").read_text())

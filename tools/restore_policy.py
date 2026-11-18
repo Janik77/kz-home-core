@@ -82,13 +82,15 @@ def full_fingerprints(connection):
     return database_snapshot(connection)[2]
 
 
-def invalidate_restored_waits(connection):
+def invalidate_restored_waits(connection, *, expected_before=None):
     """Caller must own NEW stopped target and one transaction before initialized.
 
-    Full pre-policy equality is checked by caller against the verified backup.
+    Manifest equality is checked on this transaction snapshot before any update.
     All rows/columns here are compared exactly to a computed narrow expected delta.
     """
     tables, before, fingerprints = database_snapshot(connection)
+    if expected_before is not None and fingerprints != expected_before:
+        raise ValueError("Restored data differs from complete backup fingerprints")
     runs = tables["scene_runs"]
     waits = {(r["run_id"], r["position"]): r for r in before["scene_run_waits"]}
     actions = {(r["run_id"], r["position"]): r for r in before["scene_run_actions"]}

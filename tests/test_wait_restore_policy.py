@@ -13,7 +13,9 @@ from test_server_scene_execution import start, wait_action
 from tools.restore_policy import full_fingerprints, invalidate_restored_waits
 
 
-@pytest.mark.parametrize("mode", ["valid", "claimed", "unexpected_delta"])
+@pytest.mark.parametrize(
+    "mode", ["valid", "claimed", "unexpected_delta", "fingerprint"]
+)
 def test_new_copy_policy_exact_delta_and_preserves_unknown(tmp_path, monkeypatch, mode):
     async def prepare():
         async with fixture(tmp_path, monkeypatch) as h:
@@ -51,10 +53,18 @@ def test_new_copy_policy_exact_delta_and_preserves_unknown(tmp_path, monkeypatch
                 conn.execute(text("UPDATE houses SET name='UNEXPECTED'"))
 
         event.listen(target, "after_cursor_execute", unwanted)
+    expected = dict(before)
+    if mode == "fingerprint":
+        expected["scene_runs"] = {"rows": 2, "sha256": "a" * 64}
     if mode != "valid":
-        with pytest.raises(ValueError, match="Malformed parked|outside exact allowed"):
+        with pytest.raises(
+            ValueError,
+            match="Malformed parked|outside exact allowed|differs from complete",
+        ):
             with target.begin() as conn:
-                invalidate_restored_waits(conn)
+                invalidate_restored_waits(
+                    conn, expected_before=expected if mode == "fingerprint" else None
+                )
         with target.connect() as conn:
             assert (
                 conn.scalar(
