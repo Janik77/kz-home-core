@@ -148,6 +148,18 @@ def test_wait_cancel_idempotent_and_no_undo(tmp_path, monkeypatch):
                     "cancelled",
                     "cancelled",
                 ]
+            original_init = SceneRunService.__init__
+
+            def future_view(self, session, transport=None, *, now=None):
+                original_init(self, session, transport, now=now or (lambda: future))
+
+            # Exercise actual authenticated GET and idempotent cancel handlers at
+            # a late service read time; never advance the command clock or ticker.
+            with monkeypatch.context() as late:
+                late.setattr(SceneRunService, "__init__", future_view)
+                assert (await read(h, run)) == result
+                late_cancel = await request(h, "POST", BASE + f"/{run['id']}/cancel")
+                assert late_cancel.status_code == 200 and late_cancel.json() == result
             await asyncio.sleep(1.1)
             assert len(h.wire.published) == count
             assert (await request(h, "GET", "/devices/software_relay")).json()["state"][
