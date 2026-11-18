@@ -61,6 +61,7 @@ class AutomationRunService(SceneRunService):
             raise ConflictError("Automation authorization revoked")
 
     def before_dispatch(self, run):
+        super().before_dispatch(run)
         rule = self.session.get(AutomationORM, run.scene_id, populate_existing=True)
         if (
             rule is None
@@ -82,6 +83,8 @@ class AutomationRunService(SceneRunService):
             raise ConflictError("Automation conditions changed")
         self.require_authority(run.house_id, run.requested_by)
         for action in self.actions(run.id):
+            if action.kind == "durable_wait":
+                continue
             self.fresh_device(action.device_id, run.house_id)
 
     def fresh_device(self, device_id, house_id, field="on"):
@@ -116,6 +119,12 @@ class AutomationRunService(SceneRunService):
         return device
 
     def validate_rule(self, rule):
+        from app.services.wait_contract import wait_plan
+
+        try:
+            wait_plan(rule.actions)
+        except ValueError as error:
+            raise InvalidReferenceError(str(error)) from error
         checks = [rule.trigger, *rule.conditions]
         if not 1 <= len(rule.actions) <= 16:
             raise InvalidReferenceError(
@@ -160,6 +169,8 @@ class AutomationRunService(SceneRunService):
                 )
             self.fresh_device(condition["device_id"], rule.house_id, condition["field"])
         for action in rule.actions:
+            if action.get("type") == "durable_wait":
+                continue
             if (
                 action.get("type", "device_state") != "device_state"
                 or set(action.get("state", {})) != {"on"}
@@ -202,6 +213,8 @@ class AutomationRunService(SceneRunService):
                 issues.append("transport_unavailable")
             else:
                 for action in rule.actions:
+                    if action.get("type") == "durable_wait":
+                        continue
                     from app.repositories.command_repository import CommandRepository
 
                     pending = CommandRepository(self.session).pending(
@@ -540,8 +553,16 @@ class AutomationRunService(SceneRunService):
             row = self.session.get(SceneRunORM, view.id)
             row.schedule_timezone_revision = timezone_revision
             # Bound an admitted occurrence; never send a late queued schedule.
-            row.dispatch_deadline = min(
-                utc(row.dispatch_deadline), occurrence + timedelta(seconds=30)
-            )
+            if row.durable_plan:
+                from app.models import SceneRunActionORM
+
+                first = self.session.get(SceneRunActionORM, (row.id, 0))
+                first.dispatch_before = min(
+                    utc(first.dispatch_before), occurrence + timedelta(seconds=30)
+                )
+            else:
+                row.dispatch_deadline = min(
+                    utc(row.dispatch_deadline), occurrence + timedelta(seconds=30)
+                )
             self.session.commit()
         executor.start(house_id, view.id, token)

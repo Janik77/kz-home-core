@@ -125,7 +125,7 @@ class CommandService:
         await self.transport.authorize_command(house_id, device_id)
         now = self.now()
         scene_deadline = (
-            utc(require_deadline(session, scene_action[0], now))
+            utc(require_deadline(session, scene_action[0], now, scene_action[1]))
             if scene_action is not None else None
         )
         expires_at = (
@@ -157,7 +157,7 @@ class CommandService:
             # Runs inside wait_for's task, after commit and scheduler delays.
             # Gateway checks the bounded wire expiry again after authorization.
             if scene_action is not None:
-                require_deadline(session, scene_action[0], self.now())
+                require_deadline(session, scene_action[0], self.now(), scene_action[1])
             await self.transport.send_command(
                 house_id, device_id, {"on": on}, command_id=identifier,
                 correlation_id=row.correlation_id, timestamp=utc(row.created_at),

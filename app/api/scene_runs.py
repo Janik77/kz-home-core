@@ -81,6 +81,21 @@ def build_scene_run_router(
         require(session, user, house_id, Permission.DEVICE_READ)
         return SceneRunService(session, transport).get(house_id, run_id)
 
+    @router.post("/{run_id}/cancel", response_model=SceneRunRead)
+    def cancel(
+        house_id: str,
+        run_id: str,
+        session: Session = Depends(get_session),
+        user: UserORM = Depends(get_current_user),
+    ):
+        require(session, user, house_id, Permission.SCENE_RUN)
+        require(session, user, house_id, Permission.DEVICE_CONTROL)
+        from app.services.durable_wait import cancel_wait
+
+        return cancel_wait(
+            SceneRunService(session, transport), house_id, run_id, user.id
+        )
+
     @router.post(
         "/{run_id}/actions/{position}/dispatch",
         response_model=SceneRunRead,

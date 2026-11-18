@@ -80,6 +80,11 @@ class SchedulePlanner:
         self.last_tick = None
 
     async def tick(self):
+        from app.services.durable_wait import resume_waits
+
+        await resume_waits(
+            self.session_factory, self.transport, self.executor, now=self.now
+        )
         now = self.now()
         boundary = now.replace(second=0, microsecond=0)
         previous_local, self.last_tick = self.last_tick, now

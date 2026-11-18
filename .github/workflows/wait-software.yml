@@ -1,0 +1,46 @@
+name: Durable wait software acceptance
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: wait-software-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  wait-core-relay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      LIVE_CORE_SOURCE: ${{ github.workspace }}/core
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: core
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Janik77/kz-home-web
+          ref: 96c953f40f3a8eff464e2b57b5e7817456569206
+          path: web
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12'
+      - name: Isolated fixture dependencies, no browsers or system changes
+        run: |
+          python -m venv "$RUNNER_TEMP/wait-venv"
+          "$RUNNER_TEMP/wait-venv/bin/python" -m pip install -r core/requirements-dev.txt
+          npm --prefix web ci
+      - name: Pull fixed disposable fixture images before inventory baseline
+        run: |
+          docker pull postgres:17-bookworm@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6ef6225b3e5d59c7afb35e994
+          docker pull eclipse-mosquitto:2@sha256:75d6662dee52c947dc9dd9c29f1d8d7ffef78ddaf38001caa09755681e8bbc98
+          docker pull alpine/openssl:latest@sha256:6821afa2476e11be343f29275f2ca24291720ff0a7148bd131fd8e314ff26d9e
+      - name: Actual clock, Core restart, PostgreSQL, MQTT TLS and software relay
+        working-directory: core
+        run: '"$RUNNER_TEMP/wait-venv/bin/python" -B tools/scene_run_live.py --web-root ../web --wait-only'

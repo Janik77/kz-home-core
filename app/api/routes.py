@@ -762,6 +762,20 @@ def build_router(
             raise HTTPException(404, "Resource not found")
         return service.view(row)
 
+    @router.post("/automations/{entity_id}/runs/{run_id}/cancel")
+    def cancel_automation_wait(entity_id: str, run_id: str, session: Session = Depends(get_session), user: UserORM = Depends(get_current_user)):
+        from app.services.automation_runs import AutomationRunService
+        from app.services.durable_wait import cancel_wait
+        rule = AutomationRepository(session).get(entity_id)
+        require(session,user,rule.house_id,Permission.AUTOMATION_MANAGE)
+        require(session,user,rule.house_id,Permission.DEVICE_CONTROL)
+        service = AutomationRunService(session,transport)
+        row = service.row(rule.house_id,run_id)
+        if row.scene_id != entity_id:
+            raise HTTPException(404,"Resource not found")
+        cancel_wait(service,rule.house_id,run_id,user.id,creator_only=False)
+        return service.view(row)
+
     @router.get("/events", response_model=list[EventLogRead])
     def list_events(
         house_id: str | None = None,

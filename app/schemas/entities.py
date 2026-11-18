@@ -163,21 +163,54 @@ class DelayAction(BaseModel):
     seconds: float = Field(gt=0, le=86400)
 
 
-AutomationAction = DeviceAction | DelayAction
+class DurableWaitAction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["durable_wait"]
+    seconds: int = Field(ge=1, le=3600, strict=True)
+
+
+AutomationAction = DeviceAction | DelayAction | DurableWaitAction
 
 
 class SceneCreate(BaseModel):
     id: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=255)
     house_id: str
-    actions: list[DeviceAction] = Field(default_factory=list, max_length=100)
+    actions: list[DeviceAction | DurableWaitAction] = Field(
+        default_factory=list, max_length=100
+    )
+
+    @field_validator("actions", mode="before")
+    @classmethod
+    def strict_wait_plan(cls, actions):
+        if isinstance(actions, list) and all(isinstance(a, dict) for a in actions):
+            from app.services.wait_contract import wait_plan
+
+            wait_plan(actions)
+        return actions
+
+    @model_validator(mode="after")
+    def durable_plan(self):
+        from app.services.wait_contract import wait_plan
+
+        wait_plan(self.actions)
+        return self
 
 
 class SceneUpdate(BaseModel):
     expected_revision: int | None = Field(default=None, ge=1, strict=True)
     name: str | None = Field(default=None, min_length=1, max_length=255)
     house_id: str | None = None
-    actions: list[DeviceAction] | None = None
+    actions: list[DeviceAction | DurableWaitAction] | None = None
+
+    @field_validator("actions", mode="before")
+    @classmethod
+    def validate_wait_update(cls, actions):
+        if isinstance(actions, list) and all(isinstance(a, dict) for a in actions):
+            from app.services.wait_contract import wait_plan
+
+            wait_plan(actions)
+        return actions
 
 
 class SceneRead(SceneCreate, ReadSchema):
@@ -282,6 +315,22 @@ class AutomationCreate(BaseModel):
         default_factory=list, min_length=1, max_length=100
     )
 
+    @field_validator("actions", mode="before")
+    @classmethod
+    def strict_wait_plan(cls, actions):
+        if isinstance(actions, list) and all(isinstance(a, dict) for a in actions):
+            from app.services.wait_contract import wait_plan
+
+            wait_plan(actions)
+        return actions
+
+    @model_validator(mode="after")
+    def durable_plan(self):
+        from app.services.wait_contract import wait_plan
+
+        wait_plan(self.actions)
+        return self
+
     @model_validator(mode="before")
     @classmethod
     def migrate_legacy_rule(cls, data: Any) -> Any:
@@ -319,6 +368,15 @@ class AutomationUpdate(BaseModel):
     actions: list[AutomationAction] | None = Field(
         default=None, min_length=1, max_length=100
     )
+
+    @field_validator("actions", mode="before")
+    @classmethod
+    def validate_wait_update(cls, actions):
+        if isinstance(actions, list) and all(isinstance(a, dict) for a in actions):
+            from app.services.wait_contract import wait_plan
+
+            wait_plan(actions)
+        return actions
 
 
 class AutomationRead(AutomationCreate, ReadSchema):

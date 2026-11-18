@@ -18,6 +18,16 @@ from app.db.base import Base
 
 
 class SceneRunORM(Base):
+    durable_plan: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0"
+    )
+    wait_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    wait_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    cancelled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     schedule_timezone_revision: Mapped[int | None] = mapped_column(
         Integer, nullable=True
     )
@@ -64,6 +74,10 @@ class SceneRunORM(Base):
 
 
 class SceneRunActionORM(Base):
+    kind = "device_state"
+    dispatch_before: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     __tablename__ = "scene_run_actions"
     __table_args__ = (
         CheckConstraint("position >= 0", name="ck_scene_action_position"),
@@ -91,4 +105,33 @@ class SceneRunReceiptORM(Base):
     position: Mapped[int] = mapped_column(Integer, primary_key=True)
     command_id: Mapped[str] = mapped_column(
         ForeignKey("device_commands.command_id", ondelete="RESTRICT"), unique=True
+    )
+
+
+class SceneRunWaitORM(Base):
+    """Separate additive wait snapshot; never a fabricated device or receipt."""
+
+    __tablename__ = "scene_run_waits"
+    __table_args__ = (
+        CheckConstraint("position > 0", name="ck_wait_position"),
+        CheckConstraint("seconds >= 1 AND seconds <= 3600", name="ck_wait_seconds"),
+    )
+    kind = "durable_wait"
+    device_id = None
+    requested_on = None
+    claimed = False
+    failure_code = None
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("scene_runs.id", ondelete="RESTRICT"), primary_key=True
+    )
+    position: Mapped[int] = mapped_column(Integer, primary_key=True)
+    seconds: Mapped[int] = mapped_column(Integer)
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    due_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )

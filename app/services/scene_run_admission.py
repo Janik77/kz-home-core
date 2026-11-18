@@ -1,6 +1,6 @@
 """Live database-time admission; never use transaction-start CURRENT_TIMESTAMP."""
 
-from sqlalchemy import func, select, or_, and_
+from sqlalchemy import func, select, or_, and_, literal
 from app.core.errors import ConflictError
 from app.models import SceneRunORM
 
@@ -34,7 +34,7 @@ def lease_predicate(session):
     )
 
 
-def require_deadline(session, run_id, now):
+def require_deadline(session, run_id, now, position=None):
     deadline = session.scalar(
         select(SceneRunORM.dispatch_deadline).where(
             SceneRunORM.id == run_id,
@@ -52,8 +52,30 @@ def require_deadline(session, run_id, now):
 
         if run.source_kind == "automation":
             from app.services.automation_runs import AutomationRunService
+
             service = AutomationRunService(session)
             service.before_dispatch(run)
         else:
-            SceneRunService(session).require_authority(run.house_id, run.requested_by)
+            service = SceneRunService(session)
+            service.require_authority(run.house_id, run.requested_by)
+            service.before_dispatch(run)
+    if position is not None:
+        from app.models import SceneRunActionORM
+        from app.services.command_service import utc
+
+        action = session.get(
+            SceneRunActionORM, (run_id, position), populate_existing=True
+        )
+        if action is None:
+            raise ConflictError("Only relay actions can be dispatched")
+        if action.dispatch_before is not None:
+            bound = utc(action.dispatch_before)
+            predicate = (
+                literal(bound) > func.clock_timestamp()
+                if session.get_bind().dialect.name == "postgresql"
+                else func.julianday(bound) > func.julianday("now") + 1 / 86400000
+            )
+            if now >= bound or not session.scalar(select(predicate)):
+                raise ConflictError("Action dispatch window has elapsed")
+            deadline = min(utc(deadline), bound)
     return deadline

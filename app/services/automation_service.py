@@ -195,6 +195,8 @@ class AutomationService:
         self, rule: AutomationRead, event: Event, publish_trigger: bool
     ) -> None:
         try:
+            if any(a.type == "durable_wait" for a in rule.actions):
+                raise InvalidReferenceError("Use durable automation executor")
             for action in rule.actions:
                 if action.type == "delay":
                     await asyncio.sleep(action.seconds)
