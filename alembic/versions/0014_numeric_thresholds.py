@@ -2,6 +2,7 @@
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
 
 revision = "0014_numeric_thresholds"
 down_revision = "0013_device_automations"
@@ -16,7 +17,13 @@ def upgrade():
         ("automations", "threshold_state"),
     ]:
         op.add_column(
-            table, sa.Column(name, sa.JSON(), nullable=False, server_default="{}")
+            table,
+            sa.Column(
+                name,
+                sa.JSON().with_variant(JSONB(), "postgresql"),
+                nullable=False,
+                server_default="{}",
+            ),
         )
 
 

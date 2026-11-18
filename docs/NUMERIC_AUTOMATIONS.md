@@ -77,3 +77,9 @@ receipts. Sensor CLI has no API token and creates/edits no rules or inventory.
 Tests: tests/test_numeric_thresholds.py (gateway, migrated SQLite),
 tests/test_numeric_postgresql.py (opt-in isolated PostgreSQL duplicate race).
 Existing command lifecycle and durable automation regressions remain mandatory.
+
+Independent recovery check: tests/test_numeric_process_restart.py launches two
+actual Python processes. The first exits abruptly after pending dispatch; the
+second starts full Core against the same migrated SQLite database and verifies
+no publication on startup, old/duplicate samples or new still-low sample. Network
+is FakeMQTT, not a real broker or physical device.
