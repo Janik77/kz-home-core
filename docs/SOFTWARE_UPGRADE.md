@@ -1,3 +1,57 @@
+# Numeric integration candidate: supported transfer (0014)
+
+This section supersedes the historical target below. No user profile was migrated
+while developing this branch. Acceptance must be green before using the commands.
+
+Target runtime: `3ba219e8d6b776ad4024e8b23ea894a43c22eb6d` (Core #51).
+Target Web: `03065357005b48b7ffd69ee879ab45caebd2f55a` (Web #29 candidate).
+Target schema: `0014_numeric_thresholds`. Tooling: `integration/numeric-web29`.
+The runtime-root git equality guard remains mandatory. This is a support addition
+in code, never a manual edit to profile.json or database identity.
+
+Supported source contracts (both remain tested):
+- #50 tooling `c03aa044642e8e09bf61ff51c35a46079d1118f0`, runtime
+  `f6a0826929c87b39dec7e81d22280f1218bf18f1`, Web
+  `6f8f72f86f668b53f85c13054644c80427fe9eab`, schema `0013_device_automations`.
+- #42 tooling `82653a849d2b61479de1c3bb4d74e7f388523667`, runtime
+  `f946a07f67f9ccb1e8f62c99860a0842bf3a062b`, Web
+  `c2c4fa89a0da3652e8e0cca3629300ecfd7e658f`, schema `0010_scene_runs`.
+
+The #50 fingerprint includes all pre0014 columns, including favorites, authority,
+state timestamps, command receipts and execution metadata. Only new numeric maps
+and latch default empty. #42 retains its legacy-column/default verification.
+Physical inventory is refused. Archives/hashes, clean exact source checkout,
+source identity, empty new target, stopped backup, database identity, no reseeding,
+completion markers and ownership checks remain mandatory.
+
+Example on supported Linux / local Docker Desktop (not native Windows):
+
+```sh
+# Stop source foreground launcher normally first; use its OWN old tooling.
+python /path/to/core50/tools/durable_software.py backup --state /private/source-profile --destination /private/source50-backup
+# Clean numeric integration checkout: creates only a NEW destination.
+python tools/durable_software.py upgrade --backup /private/source50-backup --state /private/numeric-profile --source-checkout /path/to/core50
+python tools/durable_software.py start --state /private/numeric-profile --web-root /path/to/web29
+python tools/durable_software.py status --state /private/numeric-profile
+```
+
+Rollback: stop target launcher; restart untouched original with its exact old
+Core/Web. Do not downgrade0014 in place or copy/rebind profile files. Backup stays
+immutable. If original is unavailable, restore its backup with old tooling to a
+NEW path. New target backup/restore uses new tooling only.
+
+CI matrix tests #42 and #50, refusal before any target creation, and intentionally
+failed partial restores. Numeric acceptance uses real PostgreSQL/TLS MQTT, saves
+a consumed threshold latch, restores into a new identity, compares numeric value,
+freshness, watermarks and latch, and proves startup/old/duplicate/still-low reports
+create no extra command. Shutdown may mark a sensor offline and clear freshness:
+this preserves unknownness, not a reset of the watermark or consumed latch.
+Original profile/backup hashes and unrelated Docker inventory must stay unchanged.
+No private backup artifacts are uploaded.
+
+---
+## Historical release notes (previous target0013)
+
 # KZ Home: отдельный программный стенд автоматизаций
 
 Версия-кандидат: Core integration branch `integration/web28-persistent` поверх #49 (runtime неизменён), Web `6f8f72f86f668b53f85c13054644c80427fe9eab`.

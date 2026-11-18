@@ -1,3 +1,19 @@
+# Numeric integration candidate
+
+Runtime Core #51 `3ba219e8d6b776ad4024e8b23ea894a43c22eb6d`,
+Web #29 candidate `03065357005b48b7ffd69ee879ab45caebd2f55a`,
+schema `0014_numeric_thresholds`; tooling `integration/numeric-web29`.
+
+Use existing launcher, not a second stack implementation:
+`python tools/run_software_stack.py --help` for disposable preview;
+`python tools/durable_software.py --help` for persistent software profiles.
+Source50 backup to NEW target transfer and original-profile rollback:
+[SOFTWARE_UPGRADE.md](SOFTWARE_UPGRADE.md). Never edit existing profile bindings.
+Acceptance pending until exact integration CI succeeds. Software emulation only.
+
+---
+## Historical Web28 integration
+
 # KZ Home: единая программная версия с Web #28
 
 Отдельная ветка `integration/web28-persistent` поверх Core #49.
