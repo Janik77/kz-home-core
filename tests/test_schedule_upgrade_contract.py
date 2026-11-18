@@ -10,10 +10,10 @@ def test_source52_exact_contract_and_schedule_pins():
         "74b7238f10a9e56cbc600f9cac21b29a5c15b46e",
         "0014_numeric_thresholds",
     )
-    assert len(manager.SUPPORTED_UPGRADE_SOURCES) == 3
-    assert manager.CORE_SHA == "45b63628829580bc564ff2490af645951926e82e"
-    assert manager.WEB_SHA == "96c953f40f3a8eff464e2b57b5e7817456569206"
-    assert manager.EXPECTED_MIGRATION == "0015_house_schedules"
+    assert len(manager.SUPPORTED_UPGRADE_SOURCES) == 4
+    assert manager.CORE_SHA == "af6dcadddcfc2d5bee97da4386021495a54d1f9a"
+    assert manager.WEB_SHA == "2ccf4172579563ad5e6cb1b0f4dba4147aada558"
+    assert manager.EXPECTED_MIGRATION == "0016_durable_waits"
 
 
 def test_source52_fingerprint_preserves_numeric_fields_and_latch():
@@ -46,3 +46,27 @@ def test_source42_house_fingerprint_uses_only_original_columns():
     query = profile.query.call_args_list[1].args[0]
     assert "id, name, created_at, updated_at" in query
     assert "timezone" not in query
+
+
+def test_source54_preserves_schedule_columns_and_exact_contract():
+    assert manager.SUPPORTED_UPGRADE_SOURCES[manager.SOURCE54_TOOL_SHA] == (
+        "45b63628829580bc564ff2490af645951926e82e",
+        "96c953f40f3a8eff464e2b57b5e7817456569206",
+        "0015_house_schedules",
+    )
+    profile = Mock()
+    profile.query.side_effect = [
+        "houses\nautomations",
+        "id\ntimezone\ntimezone_revision\nschedule_cursor",
+        "a",
+        "id\nschedule_state\nthreshold_state",
+        "b",
+    ]
+    assert manager.legacy_fingerprints(profile, "0015_house_schedules") == {
+        "houses": "a",
+        "automations": "b",
+    }
+    queries = [call.args[0] for call in profile.query.call_args_list]
+    assert "timezone_revision" not in queries[1] and "schedule_state" not in queries[3]
+    assert '"schedule_cursor"' in queries[2] and '"threshold_state"' in queries[4]
+    assert "dispatch_before" in queries[1] and "scene_run_waits" in queries[0]

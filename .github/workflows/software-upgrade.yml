@@ -13,6 +13,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - source: core54
+            core: 2142dcd584f990031d0c02ed6b4c9f1a90d14eed
+            web: 96c953f40f3a8eff464e2b57b5e7817456569206
           - source: core42
             core: 82653a849d2b61479de1c3bb4d74e7f388523667
             web: c2c4fa89a0da3652e8e0cca3629300ecfd7e658f
@@ -35,7 +38,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: Janik77/kz-home-web
-          ref: 96c953f40f3a8eff464e2b57b5e7817456569206
+          ref: 2ccf4172579563ad5e6cb1b0f4dba4147aada558
           path: web
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

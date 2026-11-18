@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: Janik77/kz-home-web
-          ref: 96c953f40f3a8eff464e2b57b5e7817456569206
+          ref: 2ccf4172579563ad5e6cb1b0f4dba4147aada558
           path: web
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
@@ -52,3 +52,7 @@ jobs:
       - name: Schedule timezone and occurrence checkpoint restore without replay
         working-directory: core
         run: '"$RUNNER_TEMP/durable-venv/bin/python" -B tests/schedule_profile_acceptance.py ../web'
+
+      - name: Parked wait new-copy invalidation and original-only continuation
+        working-directory: core
+        run: '"$RUNNER_TEMP/durable-venv/bin/python" -B tests/wait_profile_acceptance.py ../web'
