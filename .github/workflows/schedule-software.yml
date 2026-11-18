@@ -1,0 +1,40 @@
+name: Schedule software acceptance
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: schedule-software-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  schedule-core-relay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: core
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Janik77/kz-home-web
+          ref: 74b7238f10a9e56cbc600f9cac21b29a5c15b46e
+          path: web
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12'
+      - name: Isolated fixture dependencies, no browsers or system changes
+        run: |
+          python -m venv "$RUNNER_TEMP/schedule-venv"
+          "$RUNNER_TEMP/schedule-venv/bin/python" -m pip install -r core/requirements-dev.txt
+          npm --prefix web ci
+      - name: Actual clock, Core restart, PostgreSQL, MQTT TLS and software relay
+        working-directory: core
+        run: '"$RUNNER_TEMP/schedule-venv/bin/python" -B tools/scene_run_live.py --web-root ../web --schedule-only'

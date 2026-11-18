@@ -8,6 +8,22 @@ class AutomationRepository(DefinitionRepository[AutomationORM]):
     def __init__(self, session: Session) -> None:
         super().__init__(session, AutomationORM)
 
+    def create(self, values):
+        from app.services.command_clock import command_clock
+
+        return super().create(
+            {**values, "schedule_effective_after": command_clock.now()}
+        )
+
+    def update(self, entity_id, values, **kwargs):
+        from app.services.command_clock import command_clock
+
+        return super().update(
+            entity_id,
+            {**values, "schedule_effective_after": command_clock.now()},
+            **kwargs,
+        )
+
     def enabled_for_house(self, house_id: str) -> list[AutomationORM]:
         statement = select(AutomationORM).where(
             AutomationORM.house_id == house_id,

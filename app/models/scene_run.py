@@ -18,6 +18,9 @@ from app.db.base import Base
 
 
 class SceneRunORM(Base):
+    schedule_timezone_revision: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
     __tablename__ = "scene_runs"
     __table_args__ = (
         Index(

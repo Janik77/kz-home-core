@@ -44,17 +44,43 @@ class ReadSchema(BaseModel):
     updated_at: datetime
 
 
+def valid_timezone(value):
+    if value is not None:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        try:
+            ZoneInfo(value)
+        except (ValueError, ZoneInfoNotFoundError, TypeError) as error:
+            raise ValueError("timezone must be an IANA timezone") from error
+    return value
+
+
 class HouseCreate(BaseModel):
+    timezone: str | None = Field(default=None, max_length=128)
+    _timezone = field_validator("timezone")(valid_timezone)
     id: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=255)
 
 
 class HouseUpdate(BaseModel):
+    timezone: str | None = Field(default=None, max_length=128)
+    expected_timezone_revision: int | None = Field(default=None, ge=1, strict=True)
+    _timezone = field_validator("timezone")(valid_timezone)
+
+    @model_validator(mode="after")
+    def timezone_cas(self):
+        if (
+            "timezone" in self.model_fields_set
+            and self.expected_timezone_revision is None
+        ):
+            raise ValueError("timezone edit requires expected_timezone_revision")
+        return self
+
     name: str | None = Field(default=None, min_length=1, max_length=255)
 
 
 class HouseRead(HouseCreate, ReadSchema):
-    pass
+    timezone_revision: int = Field(ge=1)
 
 
 class FloorCreate(BaseModel):
@@ -227,12 +253,30 @@ class TimeCondition(BaseModel):
 AutomationCondition = DeviceStateCondition | TimeCondition
 
 
+class ScheduleTrigger(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["schedule"]
+    time: str = Field(pattern=r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")
+    weekdays: list[int] = Field(min_length=1, max_length=7)
+
+    @field_validator("weekdays", mode="before")
+    @classmethod
+    def valid_days(cls, value):
+        if not isinstance(value, list) or any(
+            type(day) is not int or day not in range(7) for day in value
+        ):
+            raise ValueError("weekdays must be integers 0 (Monday) through 6 (Sunday)")
+        if len(set(value)) != len(value):
+            raise ValueError("weekdays must be unique")
+        return sorted(value)
+
+
 class AutomationCreate(BaseModel):
     id: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=255)
     house_id: str
     enabled: bool = True
-    trigger: AutomationTrigger
+    trigger: AutomationTrigger | ScheduleTrigger
     conditions: list[AutomationCondition] = Field(default_factory=list, max_length=50)
     actions: list[AutomationAction] = Field(
         default_factory=list, min_length=1, max_length=100
@@ -270,7 +314,7 @@ class AutomationUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     house_id: str | None = None
     enabled: bool | None = None
-    trigger: AutomationTrigger | None = None
+    trigger: AutomationTrigger | ScheduleTrigger | None = None
     conditions: list[AutomationCondition] | None = None
     actions: list[AutomationAction] | None = Field(
         default=None, min_length=1, max_length=100
