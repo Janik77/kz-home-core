@@ -6,6 +6,11 @@ class ConflictError(Exception):
     pass
 
 
+class SceneDraftError(ConflictError):
+    def __init__(self):
+        super().__init__("Scene is a draft; activate it explicitly before execution")
+
+
 class InvalidReferenceError(Exception):
     pass
 

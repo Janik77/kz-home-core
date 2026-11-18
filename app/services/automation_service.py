@@ -87,9 +87,9 @@ class AutomationService:
         values = data.model_dump(
             exclude_unset=True, exclude_none=True, exclude={"expected_revision"}
         )
-        if authorized_by is not None:
-            values["authorized_by"] = authorized_by
         current = self.get(entity_id)
+        if authorized_by is not None and (values.get("enabled") is True or current.enabled):
+            values["authorized_by"] = authorized_by
         if (
             data.expected_revision is not None
             and data.expected_revision != current.revision

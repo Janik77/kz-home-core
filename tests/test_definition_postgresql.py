@@ -231,7 +231,20 @@ def test_postgresql_parallel_http_edits_conflict_after_both_validated(
         validate(self, candidate)
         barrier.wait(timeout=10)
 
-    monkeypatch.setattr(service, "_validate", synchronized_validation)
+    if kind == "scene":
+        # Scene full edits now lock the house scope before validation. A barrier
+        # inside validation would deadlock the intentional serialization. Start
+        # both actual HTTP transactions at the structural lock instead.
+        from app.repositories.physical_device_repository import PhysicalDeviceRepository
+        original_lock = PhysicalDeviceRepository.lock_houses
+
+        def synchronized_lock(self, house_ids):
+            barrier.wait(timeout=10)
+            return original_lock(self, house_ids)
+
+        monkeypatch.setattr(PhysicalDeviceRepository, "lock_houses", synchronized_lock)
+    else:
+        monkeypatch.setattr(service, "_validate", synchronized_validation)
     with TestClient(create_app(settings, run_simulator=False)) as client:
         login = client.post(
             "/auth/login",

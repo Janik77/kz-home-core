@@ -48,6 +48,7 @@ class SceneRunService:
         )
 
     def before_dispatch(self, run):
+        self.require_not_draft(run.scene_id)
         if not run.durable_plan:
             return
         if (
@@ -70,6 +71,18 @@ class SceneRunService:
                 != run.house_id
             ):
                 raise ConflictError("Durable plan device moved")
+
+    def require_not_draft(self, scene_id):
+        if self.source_kind != "scene":
+            return
+        from app.models import SceneORM
+        from app.core.errors import SceneDraftError
+
+        scene = self.session.get(SceneORM, scene_id, populate_existing=True)
+        # Historical manual snapshots remain readable/executable after deletion.
+        # New admissions separately require an existing definition.
+        if scene is not None and scene.is_draft:
+            raise SceneDraftError()
 
     def require_authority(self, house_id, user_id):
         from app.models import UserORM
@@ -152,6 +165,7 @@ class SceneRunService:
         scene = self.definition(data.scene_id)
         if scene.house_id != house_id:
             raise EntityNotFoundError("Resource not found")
+        self.require_not_draft(data.scene_id)
         if scene.revision != data.expected_revision:
             raise DefinitionRevisionConflict()
         self.require_authority(house_id, user_id)
@@ -183,6 +197,7 @@ class SceneRunService:
         scene = self.definition(data.scene_id)
         if scene.house_id != house_id:
             raise EntityNotFoundError("Resource not found")
+        self.require_not_draft(data.scene_id)
         if scene.revision != data.expected_revision:
             raise DefinitionRevisionConflict()
         actions = scene.actions
@@ -201,6 +216,8 @@ class SceneRunService:
         for action in actions:
             if action.get("type") == "durable_wait":
                 continue
+            if action.get("type", "device_state") != "device_state" or set(action) - {"type", "device_id", "state"}:
+                raise InvalidReferenceError("Unsupported scene action fields")
             device = devices.get(action["device_id"])
             if devices.house_id(device.id) != house_id:
                 raise InvalidReferenceError("Scene device belongs to another house")
@@ -534,6 +551,7 @@ class SceneRunService:
             "blocked",
         }:
             return view  # Retry retrieves evidence; never reissues a claimed action.
+        self.require_not_draft(run.scene_id)
         if action.status != "ready":
             raise ConflictError("Action is not ready for dispatch")
         # Acquire the action lock first: a predicate evaluated before waiting

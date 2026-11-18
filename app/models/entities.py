@@ -166,6 +166,7 @@ class DeviceORM(TimestampMixin, Base):
 
 
 class SceneORM(TimestampMixin, Base):
+    is_draft: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     __tablename__ = "scenes"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     revision: Mapped[int] = mapped_column(
