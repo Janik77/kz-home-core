@@ -13,8 +13,8 @@ def valid_number(field, value):
     return (
         field in NUMERIC_RANGES
         and type(value) in (int, float)
-        and math.isfinite(value)
         and NUMERIC_RANGES[field][0] <= value <= NUMERIC_RANGES[field][1]
+        and math.isfinite(value)
     )
 
 
@@ -24,7 +24,8 @@ def validate_numeric_definition(data, *, threshold=False):
         raise ValueError("Numeric capability requires a finite, bounded number")
     if threshold:
         h = data.hysteresis
-        if type(h) not in (int, float) or not math.isfinite(h) or h <= 0:
+        span = NUMERIC_RANGES[field][1] - NUMERIC_RANGES[field][0]
+        if type(h) not in (int, float) or not 0 < h <= span or not math.isfinite(h):
             raise ValueError("Positive finite hysteresis required")
         if data.operator not in {"lt", "gt"}:
             raise ValueError("Numeric threshold supports strict lt/gt only")

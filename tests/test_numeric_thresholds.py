@@ -400,3 +400,30 @@ def test_numeric_unknown_fields_are_not_silently_dropped(kind):
         body["hysteresis"] = 20
     with pytest.raises(ValueError, match="Unknown numeric"):
         cls.model_validate(body)
+
+
+@pytest.mark.parametrize("value", [10**400, -(10**400)])
+def test_unbounded_json_integer_is_rejected_without_float_overflow(value):
+    from app.services.numeric_state import valid_number
+
+    assert not valid_number("humidity", value)
+    with pytest.raises(InvalidReferenceError):
+        StateValidator._validate_values({"humidity": value})
+    with pytest.raises(ValueError):
+        AutomationTrigger(
+            type="numeric_threshold",
+            device_id="x",
+            field="humidity",
+            operator="lt",
+            value=value,
+            hysteresis=1,
+        )
+    with pytest.raises(ValueError):
+        AutomationTrigger(
+            type="numeric_threshold",
+            device_id="x",
+            field="humidity",
+            operator="lt",
+            value=50,
+            hysteresis=value,
+        )
