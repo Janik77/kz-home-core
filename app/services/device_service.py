@@ -63,6 +63,7 @@ class DeviceService:
             raise ConflictError("Physical identity is reserved; use device claiming")
         self._validate_room(data.room_id)
         self.state_validator.validate_capabilities(data.capabilities, data.state)
+        self.state_validator._validate_values(data.state)
         return self._read(self.repository.create(data.model_dump()))
 
     def update(self, device_id: str, data: DeviceUpdate) -> DeviceRead:
@@ -79,10 +80,13 @@ class DeviceService:
             self._validate_room(values["room_id"])
         if "state" in values or "capabilities" in values:
             current = self.get(device_id)
+            self.state_validator._validate_values(values.get("state", current.state))
             self.state_validator.validate_capabilities(
                 values.get("capabilities", current.capabilities),
                 values.get("state", current.state),
             )
+        if "state" in values:
+            values["numeric_observed_at"] = {}
         return self._read(self.repository.update(device_id, values))
 
     def delete(self, device_id: str) -> None:
@@ -139,18 +143,81 @@ class DeviceService:
         patch: DeviceState,
         *,
         correlation_id: str = "",
-        observed_at=None, retained=True,
+        observed_at=None,
+        retained=True,
     ) -> DeviceRead:
         self.require_house(house_id, device_id, lock=True)
-        entity = self.repository.get(device_id)
+        from sqlalchemy import select
+        from app.models import DeviceORM
+
+        entity = self.repository.session.scalar(
+            select(DeviceORM)
+            .where(DeviceORM.id == device_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         self.state_validator.validate_report(self._read(entity), patch)
         from app.services.command_service import utc
         from datetime import UTC, datetime, timedelta
+
         now = datetime.now(UTC)
-        eligible = not retained and observed_at is not None and now - timedelta(minutes=2) <= utc(observed_at) <= now + timedelta(seconds=5)
-        entity = self.repository.update(device_id, {"state_observed_at": min(now, utc(observed_at)) if eligible else None})
+        eligible = (
+            not retained
+            and observed_at is not None
+            and now - timedelta(minutes=2)
+            <= utc(observed_at)
+            <= now + timedelta(seconds=5)
+        )
+        from app.services.numeric_state import NUMERIC_RANGES
+
+        numeric = {k: v for k, v in patch.items() if k in NUMERIC_RANGES}
+        if numeric:
+            previous_stamps = dict(entity.numeric_observed_at or {})
+            stamps = dict(previous_stamps)
+            marks = dict(entity.numeric_watermarks or {})
+            accepted = {}
+            for key, value in numeric.items():
+                stamp = utc(observed_at) if observed_at is not None else None
+                prior = datetime.fromisoformat(marks[key]) if marks.get(key) else None
+                if not eligible:
+                    stamps[key] = None
+                elif prior is None or stamp > utc(prior):
+                    accepted[key] = value
+                    marks[key] = stamp.isoformat()
+                    stamps[key] = stamp.isoformat()
+            entity.numeric_observed_at, entity.numeric_watermarks = stamps, marks
+            entity.state = {**entity.state, **accepted}
+            self.repository.session.commit()
+            if accepted:
+                await self.event_bus.publish(
+                    Event(
+                        type="device_state_changed",
+                        data={
+                            "device_id": device_id,
+                            "house_id": house_id,
+                            "state": accepted,
+                            "automation_eligible": True,
+                            "numeric_observed_at": {k: stamps[k] for k in accepted},
+                            "numeric_previous_observed_at": {
+                                k: previous_stamps.get(k) for k in accepted
+                            },
+                        },
+                        correlation_id=correlation_id,
+                    )
+                )
+            patch = {k: v for k, v in patch.items() if k not in NUMERIC_RANGES}
+            if not patch:
+                return self._read(entity)
+        entity = self.repository.update(
+            device_id,
+            {"state_observed_at": min(now, utc(observed_at)) if eligible else None},
+        )
         return await self._persist_state(
-            entity, device_id, patch, correlation_id=correlation_id, automation_eligible=eligible
+            entity,
+            device_id,
+            patch,
+            correlation_id=correlation_id,
+            automation_eligible=eligible,
         )
 
     async def _persist_state(
@@ -206,6 +273,8 @@ class DeviceService:
         device = self.require_house(house_id, device_id, lock=True)
         changed = device.online != online
         metadata = {**device.metadata, "last_seen": last_seen.isoformat()}
+        if not online:
+            self.repository.update(device_id, {"numeric_observed_at": {}})
         self.repository.update(device_id, {"online": online, "metadata": metadata})
         return changed
 
@@ -224,6 +293,7 @@ class DeviceService:
                 "room_id": entity.room_id,
                 "type": entity.type,
                 "state": entity.state,
+                "numeric_observed_at": entity.numeric_observed_at or {},
                 "online": entity.online,
                 "capabilities": entity.capabilities,
                 "metadata": entity.metadata_,

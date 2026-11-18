@@ -1,7 +1,14 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+    model_serializer,
+)
 
 DeviceType = Literal[
     "light",
@@ -10,6 +17,7 @@ DeviceType = Literal[
     "motion_sensor",
     "temperature_sensor",
     "humidity_sensor",
+    "illuminance_sensor",
     "leak_sensor",
     "curtain",
     "thermostat",
@@ -105,7 +113,7 @@ class DeviceUpdate(BaseModel):
 
 
 class DeviceRead(DeviceCreate, ReadSchema):
-    pass
+    numeric_observed_at: dict[str, str | None] = Field(default_factory=dict)
 
 
 Operator = Literal["eq", "neq", "gt", "gte", "lt", "lte"]
@@ -151,15 +159,44 @@ class SceneRead(SceneCreate, ReadSchema):
 
 
 class AutomationTrigger(BaseModel):
-    type: Literal["device_state"] = "device_state"
+    type: Literal["device_state", "numeric_threshold"] = "device_state"
     device_id: str = Field(min_length=1, max_length=64)
     field: str = Field(min_length=1, max_length=64)
     operator: Operator = "eq"
     value: Any
+    hysteresis: Any = None
+
+    @model_serializer(mode="wrap")
+    def canonical_definition(self, handler):
+        data = handler(self)
+        if self.hysteresis is None:
+            data.pop("hysteresis", None)
+        return data
+
+    @model_validator(mode="after")
+    def numeric_contract(self):
+        from app.services.numeric_state import validate_numeric_definition
+
+        if self.type == "numeric_threshold":
+            validate_numeric_definition(self, threshold=True)
+        elif self.type == "numeric_state":
+            validate_numeric_definition(self)
+            if self.hysteresis is not None:
+                raise ValueError("Hysteresis requires numeric_threshold")
+        elif self.hysteresis is not None:
+            raise ValueError("Hysteresis requires numeric_threshold")
+        return self
 
     @model_validator(mode="before")
     @classmethod
     def migrate_equals(cls, data: Any) -> Any:
+        if isinstance(data, dict) and data.get("type") in {
+            "numeric_threshold",
+            "numeric_state",
+        }:
+            allowed = {"type", "device_id", "field", "operator", "value", "hysteresis"}
+            if set(data) - allowed:
+                raise ValueError("Unknown numeric definition fields are not supported")
         if isinstance(data, dict) and "equals" in data:
             data = dict(data)
             data["value"] = data.pop("equals")
@@ -167,7 +204,7 @@ class AutomationTrigger(BaseModel):
 
 
 class DeviceStateCondition(AutomationTrigger):
-    type: Literal["device_state"] = "device_state"
+    type: Literal["device_state", "numeric_state"] = "device_state"
 
 
 class TimeCondition(BaseModel):

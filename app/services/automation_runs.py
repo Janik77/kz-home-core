@@ -4,7 +4,7 @@ First slice deliberately forbids automation-to-automation chaining. No work is
 resumed on startup. Legacy definitions require explicit owner re-authorization.
 """
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from hashlib import sha256
 from types import SimpleNamespace
 from uuid import uuid4
@@ -77,22 +77,33 @@ class AutomationRunService(SceneRunService):
         for action in self.actions(run.id):
             self.fresh_device(action.device_id, run.house_id)
 
-    def fresh_device(self, device_id, house_id):
+    def fresh_device(self, device_id, house_id, field="on"):
         devices = DeviceRepository(self.session)
         device = devices.get(device_id)
         if devices.house_id(device_id) != house_id:
             raise ConflictError("Device belongs to another house")
-        if (
-            device.type != "relay"
+        from app.services.numeric_state import NUMERIC_RANGES, valid_number
+
+        observed = device.state_observed_at
+        if field in NUMERIC_RANGES:
+            if field not in device.capabilities or not valid_number(
+                field, device.state.get(field)
+            ):
+                raise InvalidReferenceError("Unsupported numeric device state")
+            value = (device.numeric_observed_at or {}).get(field)
+            observed = datetime.fromisoformat(value) if value else None
+        elif (
+            field != "on"
+            or device.type != "relay"
             or "on_off" not in device.capabilities
             or type(device.state.get("on")) is not bool
         ):
             raise InvalidReferenceError("Only Boolean relay states are supported")
         if (
             not device.online
-            or device.state_observed_at is None
-            or self.now() - utc(device.state_observed_at) > MAX_STATE_AGE
-            or utc(device.state_observed_at) > self.now() + timedelta(seconds=5)
+            or observed is None
+            or self.now() - utc(observed) > MAX_STATE_AGE
+            or utc(observed) > self.now() + timedelta(seconds=5)
         ):
             raise ConflictError("Device state is offline or stale")
         return device
@@ -103,17 +114,29 @@ class AutomationRunService(SceneRunService):
             raise InvalidReferenceError(
                 "Automation requires 1 to 16 Boolean relay actions"
             )
-        for condition in checks:
-            if (
-                condition.get("type", "device_state") != "device_state"
+        from app.schemas import AutomationTrigger, DeviceStateCondition
+
+        for i, condition in enumerate(checks):
+            kind = condition.get("type", "device_state")
+            if kind == ("numeric_threshold" if i == 0 else "numeric_state"):
+                try:
+                    (
+                        AutomationTrigger if i == 0 else DeviceStateCondition
+                    ).model_validate(condition)
+                except ValueError as error:
+                    raise InvalidReferenceError(
+                        "Unsupported numeric definition"
+                    ) from error
+            elif (
+                kind != "device_state"
                 or condition.get("field") != "on"
                 or condition.get("operator", "eq") not in {"eq", "neq"}
                 or type(condition.get("value")) is not bool
             ):
                 raise InvalidReferenceError(
-                    "Only Boolean device-state conditions are supported"
+                    "Only explicit numeric or Boolean device-state conditions are supported"
                 )
-            self.fresh_device(condition["device_id"], rule.house_id)
+            self.fresh_device(condition["device_id"], rule.house_id, condition["field"])
         for action in rule.actions:
             if (
                 action.get("type", "device_state") != "device_state"
@@ -128,7 +151,9 @@ class AutomationRunService(SceneRunService):
 
         return all(
             compare(
-                self.fresh_device(c["device_id"], rule.house_id).state["on"],
+                self.fresh_device(c["device_id"], rule.house_id, c["field"]).state[
+                    c["field"]
+                ],
                 c.get("operator", "eq"),
                 c["value"],
             )
@@ -177,7 +202,9 @@ class AutomationRunService(SceneRunService):
                 code = "state_unavailable"
             elif "authorization" in message:
                 code = "authorization_revoked"
-            elif "boolean" in message or "actions" in message:
+            elif (
+                "boolean" in message or "actions" in message or "unsupported" in message
+            ):
                 code = "unsupported_definition"
             elif "software" in message:
                 code = "destination_not_allowed"
@@ -243,16 +270,80 @@ class AutomationRunService(SceneRunService):
             if (
                 trigger.get("device_id") != event.data.get("device_id")
                 or trigger.get("field") not in event.data.get("state", {})
-                or not compare(
-                    event.data["state"][trigger["field"]],
-                    trigger.get("operator", "eq"),
-                    trigger.get("value"),
+                or (
+                    trigger.get("type") != "numeric_threshold"
+                    and not compare(
+                        event.data["state"][trigger["field"]],
+                        trigger.get("operator", "eq"),
+                        trigger.get("value"),
+                    )
                 )
             ):
                 continue
             if not rule.authorized_by:
                 continue  # Existing rules must explicitly be adopted by an authorized editor.
             await self.admit(rule.id, event, executor)
+
+    def consume_threshold(self, rule, event):
+        """Persist edge consumption before command admission. Never replay on restart.
+
+        Rejected edges are consumed too: a failed condition/permission is not a
+        deferred intent. Fresh recovery must re-arm before another edge can run.
+        """
+        trigger = rule.trigger
+        field = trigger["field"]
+        from app.schemas import AutomationTrigger
+
+        try:
+            AutomationTrigger.model_validate(trigger)
+            device = self.fresh_device(trigger["device_id"], rule.house_id, field)
+        except (ValueError, ConflictError, InvalidReferenceError, EntityNotFoundError):
+            self.session.rollback()
+            return False
+        stamp = event.data.get("numeric_observed_at", {}).get(field)
+        if not stamp or stamp != device.numeric_observed_at.get(field):
+            self.session.rollback()
+            return False
+        value = event.data["state"][field]
+        if value != device.state.get(field):
+            self.session.rollback()
+            return False
+        previous = rule.threshold_state or {}
+        fresh_revision = previous.get("revision") == rule.revision
+        if (
+            fresh_revision
+            and previous.get("observed_at")
+            and utc(datetime.fromisoformat(stamp))
+            <= utc(datetime.fromisoformat(previous["observed_at"]))
+        ):
+            self.session.rollback()
+            return False
+        limit, hysteresis = trigger["value"], trigger["hysteresis"]
+        safe = (
+            value >= limit + hysteresis
+            if trigger["operator"] == "lt"
+            else value <= limit - hysteresis
+        )
+        crossed = value < limit if trigger["operator"] == "lt" else value > limit
+        # Gaps beyond freshness limit reset initialization instead of inferring an edge.
+        continuous = (
+            fresh_revision
+            and bool(event.data.get("numeric_previous_observed_at", {}).get(field))
+            and previous.get("observed_at")
+            and utc(datetime.fromisoformat(stamp))
+            - utc(datetime.fromisoformat(previous["observed_at"]))
+            <= MAX_STATE_AGE
+        )
+        armed = bool(previous.get("armed")) if continuous else False
+        fire = bool(continuous and armed and crossed)
+        armed = safe or (armed and not fire)
+        rule.threshold_state = {
+            "revision": rule.revision,
+            "armed": bool(armed),
+            "observed_at": stamp,
+        }
+        self.session.commit()
+        return fire
 
     async def admit(self, rule_id, event, executor):
         rule = self.definition(rule_id)
@@ -263,10 +354,28 @@ class AutomationRunService(SceneRunService):
         )
         self.lock_definition(rule_id)
         self.session.refresh(rule)
-        if not rule.authorized_by:
+        if not rule.authorized_by or not rule.enabled:
             self.session.rollback()
             return
         user_id = rule.authorized_by
+        if rule.trigger.get("type") == "numeric_threshold":
+            consumed_revision = rule.revision
+            if not self.consume_threshold(rule, event):
+                return
+            # Consumption is committed before any effect. Reacquire admission locks
+            # and reject an edit/disable in that intentional crash-safe boundary.
+            self.session.scalar(
+                select(HouseORM).where(HouseORM.id == house_id).with_for_update()
+            )
+            self.lock_definition(rule_id)
+            self.session.refresh(rule)
+            if (
+                not rule.enabled
+                or rule.revision != consumed_revision
+                or rule.authorized_by != user_id
+            ):
+                self.session.rollback()
+                return
         key = (
             "automation_"
             + sha256(
@@ -303,7 +412,9 @@ class AutomationRunService(SceneRunService):
             error = "rate_limited"
         check = await self.dry_run(rule)
         if not check["issues"]:
-            current = self.fresh_device(rule.trigger["device_id"], house_id)
+            current = self.fresh_device(
+                rule.trigger["device_id"], house_id, rule.trigger["field"]
+            )
             if current.state.get(rule.trigger["field"]) != event.data["state"].get(
                 rule.trigger["field"]
             ):

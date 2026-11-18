@@ -8,7 +8,7 @@ from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.migration import MigrationContext
-from sqlalchemy import create_engine, event, inspect, select, text
+from sqlalchemy import MetaData, Table, create_engine, event, inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.db import Base
@@ -59,7 +59,9 @@ def test_onboarding_migration_preserves_existing_devices_and_matches_models(
                     )
                 )
                 connection.execute(
-                    DeviceORM.__table__.insert().values(
+                    Table("devices", MetaData(), autoload_with=connection)
+                    .insert()
+                    .values(
                         id="legacy",
                         room_id="room",
                         name="Legacy",

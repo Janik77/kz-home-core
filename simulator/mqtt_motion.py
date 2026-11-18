@@ -88,9 +88,9 @@ class Motion:
 
 
 @asynccontextmanager
-async def connection(config):
+async def connection(config, probe=None):
     context = ssl.create_default_context(cafile=config.ca_file)
-    motion = Motion(None)
+    motion = probe or Motion(None)
     async with aiomqtt.Client(
         hostname=config.host,
         port=config.port,
