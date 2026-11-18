@@ -133,6 +133,21 @@ def test_wait_cancel_idempotent_and_no_undo(tmp_path, monkeypatch):
             assert result["actions"][1]["status"] == "cancelled"
             again = await request(h, "POST", BASE + f"/{run['id']}/cancel")
             assert again.json() == result
+            from app.services.scene_run_service import SceneRunService
+
+            with Session(h.engine) as db:
+                future = datetime.fromisoformat(run["dispatch_deadline"]) + timedelta(
+                    seconds=60
+                )
+                later = SceneRunService(db, now=lambda: future).get(
+                    "fixture_house", run["id"]
+                )
+                assert later.status == "cancelled"
+                assert [a.status for a in later.actions] == [
+                    "applied",
+                    "cancelled",
+                    "cancelled",
+                ]
             await asyncio.sleep(1.1)
             assert len(h.wire.published) == count
             assert (await request(h, "GET", "/devices/software_relay")).json()["state"][

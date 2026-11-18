@@ -23,6 +23,8 @@ def wait_action_view(run, action, predecessor_ok, expired, interrupted, now):
     due = utc(action.due_at) if action.due_at else None
     if action.completed_at is not None:
         status = "completed"
+    elif run.cancelled_at is not None:
+        status = "cancelled"
     elif (
         expired
         or run.execution_error in {"wait_expired", "wait_clock_reversed"}

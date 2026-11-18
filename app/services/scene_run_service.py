@@ -392,6 +392,8 @@ class SceneRunService:
                     and not run.execution_error
                     else "dispatch_unknown"
                 )
+            elif run.durable_plan and run.cancelled_at is not None:
+                status = "cancelled"
             elif stopped or expired or interrupted or run.execution_error:
                 status = (
                     (
