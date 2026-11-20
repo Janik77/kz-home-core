@@ -1,0 +1,63 @@
+name: Reviewed schema0018 software profile upgrade
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: reviewed-0018-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  disposable-0018:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: core
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Janik77/kz-home-core
+          ref: 80770e8a3f59d0bd7fb825345f0ca7589dd26f23
+          fetch-depth: 0
+          path: source-core
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Janik77/kz-home-web
+          ref: 36515bdcb003e875108dd722febe5c969825f304
+          path: source-web
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Janik77/kz-home-web
+          ref: cf0436d75ac248397050daa42c7ff1a33666814c
+          path: web
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12'
+      - name: Install isolated pinned dependencies
+        run: |
+          python -m venv "$RUNNER_TEMP/reviewed-0018"
+          "$RUNNER_TEMP/reviewed-0018/bin/python" -m pip install -r core/requirements-dev.txt
+          "$RUNNER_TEMP/reviewed-0018/bin/python" -m pip check
+          npm --prefix source-web ci
+          npm --prefix web ci
+      - name: Pull known images for exclusively disposable containers
+        run: |
+          docker pull postgres:17-bookworm@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6ef6225b3e5d59c7afb35e994
+          docker pull eclipse-mosquitto:2@sha256:75d6662dee52c947dc9dd9c29f1d8d7ffef78ddaf38001caa09755681e8bbc98
+          docker pull alpine/openssl:latest@sha256:6821afa2476e11be343f29275f2ca24291720ff0a7148bd131fd8e314ff26d9e
+      - name: Fail-closed contracts and real software profile copy
+        working-directory: core
+        run: |
+          "$RUNNER_TEMP/reviewed-0018/bin/python" -B -m pytest -q tests/test_reviewed_0018_upgrade.py tests/test_wait_restore_policy.py
+          "$RUNNER_TEMP/reviewed-0018/bin/python" -B tests/wait_profile_acceptance.py ../web ../source-core ../source-web --reviewed-0018

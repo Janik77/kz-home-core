@@ -45,7 +45,7 @@ def inventory(docker):
     }
 
 
-def launch(profile, web, core=CORE):
+def launch(profile, web, core=CORE, *, release=None):
     process = subprocess.Popen(
         [
             sys.executable,
@@ -56,6 +56,7 @@ def launch(profile, web, core=CORE):
             str(profile.path),
             "--web-root",
             str(web),
+            *(["--release", release] if release else []),
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,

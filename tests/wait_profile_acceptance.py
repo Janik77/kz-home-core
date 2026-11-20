@@ -49,6 +49,10 @@ def historical_backup(old_core, source_path, backup):
 def main():
     assert os.environ.get("GITHUB_ACTIONS") == "true", "CI only"
     web = Path(sys.argv[1]).resolve()
+    same_schema = len(sys.argv) > 4 and sys.argv[4] == "--reviewed-0018"
+    release = manager.CORE61_RELEASE if same_schema else None
+    if same_schema:
+        manager.CORE_SHA, manager.WEB_SHA = manager.CORE61_RUNTIME_SHA, manager.CORE61_WEB_SHA
     manager.validate_core()
     old_core = Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else None
     old_web = Path(sys.argv[3]).resolve() if old_core else None
@@ -56,11 +60,20 @@ def main():
     if old_core:
         import importlib.util
 
-        manager.validate_source_checkout(old_core)
-        assert manager.source_contract(old_core)[2] in {
-            "0016_durable_waits",
-            "0017_metadata_cas",
-        }
+        if same_schema:
+            assert subprocess.check_output(
+                ["git", "-C", str(old_core), "rev-parse", "HEAD"], text=True
+            ).strip() == manager.SOURCE60_TOOL_SHA
+            assert not subprocess.check_output(
+                ["git", "-C", str(old_core), "status", "--porcelain"], text=True
+            ).strip()
+            assert manager.reviewed_0018_source(manager.SOURCE60_TOOL_SHA)[2] == "0018_scene_drafts"
+        else:
+            manager.validate_source_checkout(old_core)
+            assert manager.source_contract(old_core)[2] in {
+                "0016_durable_waits",
+                "0017_metadata_cas",
+            }
         spec = importlib.util.spec_from_file_location(
             "source56_wait_profile", old_core / "tools/durable_software.py"
         )
@@ -70,6 +83,8 @@ def main():
 
     def restore_copy(backup, target):
         try:
+            if same_schema:
+                return manager.upgrade_reviewed_0018(backup, target, manager.SOURCE60_TOOL_SHA, web)
             return (
                 manager.upgrade(backup, target, old_core)
                 if old_core
@@ -94,6 +109,20 @@ def main():
         base = "/core-api/v1/houses/fixture_house/scene-runs"
         with httpx.Client(base_url=url, trust_env=False, timeout=10) as http:
             login(http, source)
+            if same_schema:
+                house = http.get("/core-api/houses/fixture_house")
+                house.raise_for_status()
+                assert http.patch(
+                    "/core-api/houses/fixture_house",
+                    json={"name": "Preserved test home", "expected_metadata_revision": house.json()["metadata_revision"]},
+                ).status_code == 200
+                assert http.post(
+                    "/core-api/rooms",
+                    json={"id": "restore_room", "name": "Preserved room", "floor_id": "fixture_floor"},
+                ).status_code == 201
+                assert http.put(
+                    "/core-api/v1/houses/fixture_house/me/device-favorites/fixture_relay"
+                ).status_code == 204
             response = http.post(
                 "/core-api/scenes",
                 json=dict(
@@ -177,7 +206,14 @@ def main():
         target = restore_copy(backup, root / "target")
         profiles.append(target)
         audit = json.loads((target.path / "restore-policy.json").read_text())
-        if old_core:
+        if same_schema:
+            assert audit["before"] == manifest["database"]
+            assert set(audit["before"]) == set(audit["after"])
+            assert {table for table in audit["before"] if audit["before"][table] != audit["after"][table]} == {"scene_runs"}
+            assert target.state["owner"] != source.state["owner"]
+            assert target.state["database_identity"] != source.state["database_identity"]
+            assert target.state["web_port"] != source.state["web_port"]
+        elif old_core:
             # migrate_upgrade first compares the FULL source manifest before any
             # DDL, then all legacy columns and only counter=1 additions. The
             # policy receives that verified post-migration baseline atomically.
@@ -206,7 +242,7 @@ def main():
             assert audit["before"] == manifest["database"]
         assert len(audit["changes"]) == 1 and audit["changes"][0]["run_id"] == run["id"]
         assert audit["changes"][0]["reason"] == "restore_invalidation"
-        process, url = launch(target, web)
+        process, url = launch(target, web, release=release)
         with httpx.Client(base_url=url, trust_env=False, timeout=10) as http:
             login(http, target)
             time.sleep(2)
@@ -222,6 +258,12 @@ def main():
             ]
             assert cancelled["actions"][0]["receipt"] == first
             assert target.query("SELECT count(*) FROM device_commands") == "1"
+            if same_schema:
+                assert http.get("/core-api/houses/fixture_house").json()["name"] == "Preserved test home"
+                assert http.get("/core-api/rooms/restore_room").json()["name"] == "Preserved room"
+                assert http.get("/core-api/v1/houses/fixture_house/me/device-favorites").json() == {"device_ids": ["fixture_relay"]}
+                assert http.get("/core-api/scenes/restore_wait").json()["name"] == "Explicit source wait"
+                assert audit["before"]["event_logs"] == audit["after"]["event_logs"]
         halt(process)
         process = None
         with target.lock():
@@ -233,7 +275,7 @@ def main():
             second_audit["changes"] == []
             and second_audit["before"] == second_audit["after"]
         )
-        process, url = launch(second, web)
+        process, url = launch(second, web, release=release)
         with httpx.Client(base_url=url, trust_env=False, timeout=10) as http:
             login(http, second)
             time.sleep(2)
@@ -274,7 +316,7 @@ def main():
         halt(process)
         process = None
         # Cancellation remains stable after the original due time has passed.
-        process, url = launch(target, web)
+        process, url = launch(target, web, release=release)
         with httpx.Client(base_url=url, trust_env=False, timeout=10) as http:
             login(http, target)
             time.sleep(2)

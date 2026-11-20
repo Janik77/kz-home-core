@@ -1,4 +1,4 @@
-name: Supported software upgrade
+name: Supported software upgrade (historical Core PR60)
 on:
   pull_request:
   workflow_dispatch:
@@ -39,6 +39,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           path: core
+          # Explicit historical compatibility check, not candidate runtime evidence.
+          ref: 80770e8a3f59d0bd7fb825345f0ca7589dd26f23
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

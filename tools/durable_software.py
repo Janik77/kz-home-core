@@ -21,6 +21,9 @@ from uuid import uuid4
 CORE = Path(__file__).resolve().parents[1]
 CORE_SHA = "1a43ecba1cd07dd231f313fcd42d4d4276e13967"
 WEB_SHA = "36515bdcb003e875108dd722febe5c969825f304"
+CORE61_RUNTIME_SHA = "3cfec75067e4da4a7950de1fb4877e47e346be9b"
+CORE61_WEB_SHA = "cf0436d75ac248397050daa42c7ff1a33666814c"
+CORE61_RELEASE = "core61-web34"
 PG = "postgres:17-bookworm@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6ef6225b3e5d59c7afb35e994"
 MQTT = "eclipse-mosquitto:2@sha256:75d6662dee52c947dc9dd9c29f1d8d7ffef78ddaf38001caa09755681e8bbc98"
 OPENSSL = "alpine/openssl:latest@sha256:6821afa2476e11be343f29275f2ca24291720ff0a7148bd131fd8e314ff26d9e"
@@ -524,6 +527,12 @@ SOURCE52_TOOL_SHA = "244549d3cd6b5b2c5b7bc9757e438d2729553155"
 SOURCE54_TOOL_SHA = "2142dcd584f990031d0c02ed6b4c9f1a90d14eed"
 SOURCE56_TOOL_SHA = "f2ec065426e72fb60b3e944ca6fd852bdffde48a"
 SOURCE58_TOOL_SHA = "cfe6ce70ed8e2f3392567ec27a807343d5e866bc"
+SOURCE60_TOOL_SHA = "80770e8a3f59d0bd7fb825345f0ca7589dd26f23"
+SOURCE60_PROFILE = (
+    "1a43ecba1cd07dd231f313fcd42d4d4276e13967",
+    "36515bdcb003e875108dd722febe5c969825f304",
+    "0018_scene_drafts",
+)
 SUPPORTED_UPGRADE_SOURCES = {
     SOURCE58_TOOL_SHA: (
         "fc232035f78c99171fd72ac82c78eb1b5bb657fa",
@@ -816,11 +825,57 @@ def upgrade(source, destination, source_checkout):
     )
 
 
+def reviewed_0018_source(source_commit):
+    """Verify the exact source object in the existing checkout; never execute it."""
+    if source_commit != SOURCE60_TOOL_SHA:
+        raise ValueError("Same-schema upgrade requires the exact Core #60 source SHA")
+    try:
+        revision = subprocess.check_output(
+            ["git", "--no-replace-objects", "-C", str(CORE), "rev-parse",
+             "--verify", source_commit + "^{commit}"],
+            stderr=subprocess.DEVNULL, text=True,
+        ).strip()
+    except subprocess.CalledProcessError:
+        raise ValueError("The reviewed Core #60 commit is absent from this checkout") from None
+    if revision != SOURCE60_TOOL_SHA:
+        raise ValueError("The Core #60 source commit could not be verified")
+    return SOURCE60_PROFILE
+
+
+def upgrade_reviewed_0018(source, destination, source_commit, web_root):
+    """This one reviewed no-schema-change path does not reuse legacy migration logic."""
+    if not CORE61_WEB_SHA or (CORE_SHA, WEB_SHA) != (CORE61_RUNTIME_SHA, CORE61_WEB_SHA):
+        raise ValueError("Select the exact reviewed Core #61 / Web #34 profile release")
+    validate_core()
+    sys.path.insert(0, str(CORE / "tools"))
+    from run_software_stack import validate_web
+    validate_web(web_root, expected_sha=CORE61_WEB_SHA)
+    return _restore(
+        source, destination, upgrading=True,
+        source_version=reviewed_0018_source(source_commit), same_schema=True,
+    )
+
+
+def verify_0018_manifest(value):
+    """The reviewed equal-schema path requires all packaged application tables."""
+    sys.path.insert(0, str(CORE))
+    from app import models  # noqa: F401  # Register all packaged mapped tables.
+    from app.db.base import Base
+    from tools.restore_policy import validate_fingerprint_manifest
+
+    validate_fingerprint_manifest(value)
+    expected = set(Base.metadata.tables) | {"alembic_version"}
+    if set(value) != expected:
+        raise ValueError("Core #60 backup must contain every schema0018 table")
+    if value["alembic_version"]["rows"] != 1 or value["physical_devices"]["rows"] != 0:
+        raise ValueError("Invalid schema0018 fingerprint or physical inventory in backup")
+
+
 def restore(source, destination):
     return _restore(source, destination, upgrading=False)
 
 
-def _restore(source, destination, *, upgrading, source_version=None):
+def _restore(source, destination, *, upgrading, source_version=None, same_schema=False):
     source = Path(source).expanduser().absolute()
     if any(p.is_symlink() for p in (source, *source.parents, source / "manifest.json")):
         raise ValueError("Symlink backup refused")
@@ -831,9 +886,12 @@ def _restore(source, destination, *, upgrading, source_version=None):
         SOURCE_WEB_SHA,
         SOURCE_MIGRATION,
     )
+    if same_schema and (not upgrading or source_version != SOURCE60_PROFILE
+                        or EXPECTED_MIGRATION != SOURCE60_PROFILE[2]):
+        raise ValueError("Unsupported same-schema source")
     expected_format = (
         1
-        if upgrading
+        if upgrading and not same_schema
         and source_version[2] not in {"0016_durable_waits", "0017_metadata_cas"}
         else 2
     )
@@ -846,7 +904,10 @@ def _restore(source, destination, *, upgrading, source_version=None):
         sys.path.insert(0, str(CORE))
         from tools.restore_policy import validate_fingerprint_manifest
 
-        validate_fingerprint_manifest(manifest.get("database"))
+        if same_schema:
+            verify_0018_manifest(manifest.get("database"))
+        else:
+            validate_fingerprint_manifest(manifest.get("database"))
     contents = {}
     for name in expected:
         item = source / name
@@ -867,6 +928,9 @@ def _restore(source, destination, *, upgrading, source_version=None):
         or not Path(saved.get("profile_path", "")).is_absolute()
     ):
         raise ValueError("Backup lacks required source identity")
+    source_port = saved.get("web_port")
+    if same_schema and (type(source_port) is not int or not 1024 <= source_port < 65536):
+        raise ValueError("Invalid reviewed source profile port")
     saved["core_sha"], saved["web_sha"] = CORE_SHA, WEB_SHA
     docker = Docker()
     target = new_directory(destination)  # Never restore into any existing profile.
@@ -874,7 +938,12 @@ def _restore(source, destination, *, upgrading, source_version=None):
     saved["profile_path"] = str(target)
     saved["directory_identity"] = f"{target.stat().st_dev}:{target.stat().st_ino}"
     saved.pop("database_identity", None)
-    saved["web_port"] = free_port()
+    for _ in range(8):
+        saved["web_port"] = free_port()
+        if not same_schema or saved["web_port"] != source_port:
+            break
+    else:
+        raise ValueError("Could not reserve a different port from the source profile")
     contents["profile.json"] = json.dumps(saved).encode()
     for name in FILES:
         private_write(target / name, contents[name])
@@ -916,13 +985,19 @@ def _restore(source, destination, *, upgrading, source_version=None):
                 != source_version[2]
             ):
                 raise ValueError("Unsupported source migration")
-            policy_baseline = migrate_upgrade(
-                profile,
-                source_migration=source_version[2],
-                expected_source=manifest.get("database")
-                if expected_format == 2
-                else None,
-            )
+            if same_schema:
+                # Elsewhere legacy branches compare transformations after DDL.
+                # For the equal head, pass the original *complete* manifest to
+                # the existing transaction guard; no schema upgrade is needed.
+                policy_baseline = manifest["database"]
+            else:
+                policy_baseline = migrate_upgrade(
+                    profile,
+                    source_migration=source_version[2],
+                    expected_source=manifest.get("database")
+                    if expected_format == 2
+                    else None,
+                )
         else:
             policy_baseline = manifest["database"]
         profile.verify_database()
@@ -1156,6 +1231,7 @@ async def provision_once(profile, api, ids, seed):
 
 
 def main():
+    global CORE_SHA, WEB_SHA
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "action",
@@ -1165,8 +1241,15 @@ def main():
     parser.add_argument("--web-root", type=Path)
     parser.add_argument("--destination", type=Path)
     parser.add_argument("--backup", type=Path)
-    parser.add_argument("--source-checkout", type=Path)
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--source-checkout", type=Path)
+    source.add_argument("--source-commit")
+    parser.add_argument("--release", choices=(CORE61_RELEASE,))
     args = parser.parse_args()
+    if args.release == CORE61_RELEASE:
+        if not CORE61_WEB_SHA:
+            parser.error("The exact candidate Web SHA has not been pinned")
+        CORE_SHA, WEB_SHA = CORE61_RUNTIME_SHA, CORE61_WEB_SHA
     if os.name != "posix" or os.getuid() == 0:
         parser.error(
             "Use an ordinary Linux/WSL user with existing Docker access; do not elevate"
@@ -1179,9 +1262,16 @@ def main():
             )
             return
         if args.action == "upgrade":
-            if args.backup is None or args.source_checkout is None:
-                parser.error("--backup and --source-checkout required")
-            upgrade(args.backup, args.state, args.source_checkout)
+            if args.backup is None:
+                parser.error("--backup required")
+            if args.release == CORE61_RELEASE:
+                if args.source_commit is None or args.web_root is None:
+                    parser.error("--source-commit and --web-root required for the reviewed release")
+                upgrade_reviewed_0018(args.backup, args.state, args.source_commit, args.web_root)
+            else:
+                if args.source_checkout is None:
+                    parser.error("--source-checkout required")
+                upgrade(args.backup, args.state, args.source_checkout)
             print(
                 "Upgraded into NEW stopped profile; source profile and backup untouched."
             )
@@ -1221,7 +1311,7 @@ def main():
                 sys.path[:0] = [str(CORE), str(args.web_root.resolve() / "e2e")]
                 from run_software_stack import run, validate_web
 
-                web = validate_web(args.web_root)
+                web = validate_web(args.web_root, expected_sha=WEB_SHA)
 
                 # An async context manager factory itself is synchronous.
                 def stack_factory(core):
