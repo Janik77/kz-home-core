@@ -16,13 +16,13 @@ CORE = Path(__file__).resolve().parents[1]
 WEB_SHA = "36515bdcb003e875108dd722febe5c969825f304"
 
 
-def validate_web(root):
+def validate_web(root, *, expected_sha=WEB_SHA):
     root = root.resolve()
     head = subprocess.check_output(
         ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
     ).strip()
-    if head != WEB_SHA:
-        raise ValueError(f"Use the pinned Web checkout {WEB_SHA}")
+    if head != expected_sha:
+        raise ValueError(f"Use the pinned Web checkout {expected_sha}")
     if subprocess.check_output(
         ["git", "-C", str(root), "status", "--porcelain"], text=True
     ).strip():
