@@ -158,10 +158,15 @@ class CommandService:
             # Gateway checks the bounded wire expiry again after authorization.
             if scene_action is not None:
                 require_deadline(session, scene_action[0], self.now(), scene_action[1])
+            # Admission can refresh ORM rows after commit. PostgreSQL returns
+            # timestamptz in its session zone; the wire requires UTC. Convert
+            # each instant without extending or recomputing the saved deadline.
+            timestamp = utc(row.created_at).astimezone(UTC)
+            deadline = utc(row.expires_at).astimezone(UTC)
             await self.transport.send_command(
                 house_id, device_id, {"on": on}, command_id=identifier,
-                correlation_id=row.correlation_id, timestamp=utc(row.created_at),
-                expires_at=utc(row.expires_at),
+                correlation_id=row.correlation_id, timestamp=timestamp,
+                expires_at=deadline,
             )
 
         try:

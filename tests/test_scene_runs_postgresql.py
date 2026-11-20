@@ -221,3 +221,98 @@ def test_postgresql_server_distinct_keys_have_one_active_scene(pg_definitions):
     assert results.count("conflict") == 1
     with Session(pg_definitions) as session:
         assert session.query(SceneRunORM).count() == 1
+
+
+@pytest.mark.parametrize("database_zone", ["UTC", "Asia/Almaty"])
+@pytest.mark.parametrize("kind", ["scene", "schedule"])
+def test_server_dispatch_preserves_committed_utc_instants(
+    pg_definitions, database_zone, kind
+):
+    """Post-commit authorization refreshes timestamptz fields in the DB session zone."""
+    from datetime import UTC, datetime, timedelta
+    from sqlalchemy import select, text
+    from app.events.bus import EventBus
+    from app.models import AutomationORM, DeviceCommandORM, DeviceORM, HouseMembershipORM, HouseORM
+    from app.services.automation_runs import AutomationRunService
+    from app.transports.mqtt import MQTTGateway
+    from app.transports.mqtt_client import FakeMQTTClient
+    from app.transports.mqtt_models import CommandEnvelope
+
+    timestamp = datetime.now(UTC)
+    with pg_definitions.connect() as db:
+        db.execute(text("SELECT set_config('TimeZone', :zone, false)"), {"zone": database_zone})
+        db.commit()
+        with Session(bind=db, expire_on_commit=False) as session:
+            user = UserService(UserRepository(session)).create(
+                "utc-wire@example.test", "wire-normalization-test-password"
+            )
+            session.add(HouseMembershipORM(
+                id=str(uuid4()), user_id=user.id, house_id="a", role="owner"
+            ))
+            session.get(SceneORM, "scene").actions = [
+                {"device_id": "fixture", "state": {"on": True}}
+            ]
+            session.get(HouseORM, "a").timezone = "UTC"
+            session.get(DeviceORM, "fixture").state_observed_at = timestamp
+            rule = session.get(AutomationORM, "rule")
+            rule.enabled = True
+            rule.authorized_by = user.id
+            rule.trigger = {
+                "type": "schedule", "time": timestamp.strftime("%H:%M"),
+                "weekdays": [timestamp.weekday()],
+            }
+            rule.schedule_effective_after = timestamp - timedelta(minutes=1)
+            rule.actions = [
+                {"type": "device_state", "device_id": "fixture", "state": {"on": True}}
+            ]
+            session.commit()
+
+            async def unused(*args):
+                return None
+
+            async def authorise(house_id, device_id):
+                assert (house_id, device_id) == ("a", "fixture")
+
+            class Executor:
+                params = None
+
+                def start(self, *params):
+                    self.params = params
+
+            async def dispatch_once():
+                client = FakeMQTTClient()
+                await client.connect()
+                gateway = MQTTGateway(client, EventBus(), unused, unused, unused,
+                                      command_guard=authorise)
+                gateway.connected = True
+                if kind == "scene":
+                    service = SceneRunService(session, gateway)
+                    executor_token = str(uuid4())
+                    view = await service.create_server(
+                        "a", user.id, str(uuid4()),
+                        SceneRunCreate(scene_id="scene", expected_revision=1),
+                        executor_token,
+                    )
+                    run_id = view.id
+                else:
+                    service = AutomationRunService(session, gateway)
+                    executor = Executor()
+                    await service.admit("rule", None, executor, occurrence=timestamp)
+                    assert executor.params is not None
+                    _, run_id, executor_token = executor.params
+                await service.dispatch("a", run_id, 0, user.id, executor_token=executor_token)
+                assert len(client.published) == 1
+                _, payload, _, retain = client.published[0]
+                assert retain is False
+                return CommandEnvelope.model_validate_json(payload)
+
+            wire = asyncio.run(dispatch_once())
+            session.expire_all()
+            row = session.scalar(select(DeviceCommandORM))
+            offset = timedelta(hours=0 if database_zone == "UTC" else 5)
+            assert row.created_at.utcoffset() == row.expires_at.utcoffset() == offset
+            assert wire.timestamp.utcoffset() == wire.expires_at.utcoffset() == timedelta(0)
+            assert wire.timestamp == row.created_at and wire.expires_at == row.expires_at
+            assert timedelta(0) < wire.expires_at - wire.timestamp <= timedelta(seconds=30)
+            assert wire.command_id == row.command_id and wire.correlation_id == row.correlation_id
+            assert row.status == "dispatched"
