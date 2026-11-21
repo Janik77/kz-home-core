@@ -6,9 +6,9 @@
 
 | Компонент | Версия |
 |---|---|
-| Core runtime, PR #59 | `1a43ecba1cd07dd231f313fcd42d4d4276e13967` |
-| Web, PR #33, compact UX | `36515bdcb003e875108dd722febe5c969825f304` |
-| Исполняемый tooling | `8073789efa06db6962725c88be54a1f86ba964c2` |
+| Core runtime, PR #64 | `b897b93726ef4d02e596e0b83c568df269e29bcc` |
+| Web, PR #38, Android/desktop pilot | `9c2b6dbeb85de019ffb86f135378e0331512a5b9` |
+| Исполняемый tooling | Следующий tooling-коммит в ветке квалификации; точный SHA фиксируется в отчёте CI |
 | Схема | `0018_scene_drafts` |
 
 Tooling проверяет равенство runtime-файлов указанному SHA. Итоговый отчёт должен отдельно назвать проверенный integration SHA и реальные результаты CI/браузера. Последующая документация не меняет исполняемый tooling.
