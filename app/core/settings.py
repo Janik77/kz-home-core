@@ -30,6 +30,7 @@ class Settings:
     mqtt_client_id: str | None = None
     # Trusted operator classification, never ordinary Device metadata.
     mqtt_software_devices: tuple[tuple[str, str], ...] = ()
+    software_device_candidates: tuple[tuple[str, str, str], ...] = ()
     auth_jwt_secret: str = "development-only-change-me-32-bytes"
     auth_jwt_algorithm: str = "HS256"
     auth_access_token_minutes: int = 15
@@ -45,6 +46,30 @@ class Settings:
                 ) for value in pair)
             ):
                 raise ValueError("MQTT_SOFTWARE_DEVICES requires exact house/device pairs")
+        if self.software_device_candidates:
+            if (
+                self.app_env.lower() == "production"
+                or not self.mqtt_enabled
+                or not self.mqtt_tls_enabled
+                or len(self.software_device_candidates) > 32
+            ):
+                raise ValueError("Software device onboarding requires an isolated TLS MQTT lab")
+            seen = set()
+            for item in self.software_device_candidates:
+                if (
+                    not isinstance(item, tuple)
+                    or len(item) != 3
+                    or any(not isinstance(value, str) for value in item)
+                ):
+                    raise ValueError("Invalid software device candidate")
+                house_id, device_id, device_type = item
+                if (
+                    device_type not in {"relay", "temperature_sensor"}
+                    or (house_id, device_id) not in self.mqtt_software_devices
+                    or device_id in seen
+                ):
+                    raise ValueError("Software candidates must use unique approved MQTT identities")
+                seen.add(device_id)
         if self.auth_jwt_algorithm not in {"HS256", "HS384", "HS512"}:
             raise ValueError("AUTH_JWT_ALGORITHM must be an approved HMAC algorithm")
         if self.auth_access_token_minutes < 1 or self.auth_refresh_token_days < 1:
@@ -106,6 +131,7 @@ class Settings:
             mqtt_keepalive=_integer("MQTT_KEEPALIVE", 60),
             mqtt_client_id=_optional("MQTT_CLIENT_ID"),
             mqtt_software_devices=_software_devices(),
+            software_device_candidates=_software_devices("KZHOME_SOFTWARE_DEVICE_CANDIDATES"),
             auth_jwt_secret=os.getenv(
                 "AUTH_JWT_SECRET", "development-only-change-me-32-bytes"
             ),
@@ -125,14 +151,14 @@ def _boolean(name: str, default: bool) -> bool:
     return normalized in {"1", "true", "yes", "on"}
 
 
-def _software_devices() -> tuple[tuple[str, str], ...]:
+def _software_devices(name: str = "MQTT_SOFTWARE_DEVICES") -> tuple:
     try:
-        value = json.loads(os.getenv("MQTT_SOFTWARE_DEVICES", "[]"))
+        value = json.loads(os.getenv(name, "[]"))
         if not isinstance(value, list) or any(not isinstance(pair, list) for pair in value):
             raise ValueError
         return tuple(tuple(pair) for pair in value)
     except (ValueError, TypeError):
-        raise ValueError("Invalid MQTT_SOFTWARE_DEVICES") from None
+        raise ValueError(f"Invalid {name}") from None
 
 
 def _integer(name: str, default: int) -> int:
