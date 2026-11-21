@@ -1,5 +1,6 @@
 """CI-only real PG/TLS NEW-copy invalidation, same-source resume and second restore."""
 
+from datetime import datetime
 import json
 import os
 from pathlib import Path
@@ -181,7 +182,13 @@ def main():
                     },
                 )
                 assert draft.status_code == 201 and draft.json()["is_draft"]
-                expected_paths["/core-api/scenes/source60_draft"] = draft.json()
+                draft_path = "/core-api/scenes/source60_draft"
+                persisted_draft = http.get(draft_path)
+                assert (
+                    persisted_draft.status_code == 200
+                    and persisted_draft.json()["is_draft"]
+                )
+                expected_paths[draft_path] = persisted_draft.json()
             response = http.post(
                 base + "/execute",
                 headers={"Idempotency-Key": uuid4().hex},
@@ -312,7 +319,19 @@ def main():
             )
             for p, expected in expected_paths.items():
                 actual = http.get(p)
-                assert actual.status_code == 200 and actual.json() == expected
+                assert actual.status_code == 200, (
+                    f"Restored fixture HTTP {p}: {actual.status_code}"
+                )
+                value = actual.json()
+                if p == "/core-api/houses/fixture_house":
+                    # The complete manifest was already compared on the stopped
+                    # copy. Live scheduler ticks update schedule_cursor and
+                    # organically advance HouseORM.updated_at after startup.
+                    expected = dict(expected)
+                    updated_before = datetime.fromisoformat(expected.pop("updated_at"))
+                    updated_after = datetime.fromisoformat(value.pop("updated_at"))
+                    assert updated_after >= updated_before
+                assert value == expected, f"Restored fixture payload mismatch at {p}"
         halt(process)
         process = None
         with target.lock():
