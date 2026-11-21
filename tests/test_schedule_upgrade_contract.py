@@ -10,9 +10,17 @@ def test_source52_exact_contract_and_schedule_pins():
         "74b7238f10a9e56cbc600f9cac21b29a5c15b46e",
         "0014_numeric_thresholds",
     )
-    assert len(manager.SUPPORTED_UPGRADE_SOURCES) == 6
-    assert manager.CORE_SHA == "1a43ecba1cd07dd231f313fcd42d4d4276e13967"
-    assert manager.WEB_SHA == "36515bdcb003e875108dd722febe5c969825f304"
+    assert set(manager.SUPPORTED_UPGRADE_SOURCES) == {
+        manager.SOURCE_TOOL_SHA,
+        manager.SOURCE50_TOOL_SHA,
+        manager.SOURCE52_TOOL_SHA,
+        manager.SOURCE54_TOOL_SHA,
+        manager.SOURCE56_TOOL_SHA,
+        manager.SOURCE58_TOOL_SHA,
+        manager.SOURCE60_TOOL_SHA,
+    }
+    assert manager.CORE_SHA == "b897b93726ef4d02e596e0b83c568df269e29bcc"
+    assert manager.WEB_SHA == "9c2b6dbeb85de019ffb86f135378e0331512a5b9"
     assert manager.EXPECTED_MIGRATION == "0018_scene_drafts"
 
 

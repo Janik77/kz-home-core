@@ -19,8 +19,8 @@ import traceback
 from uuid import uuid4
 
 CORE = Path(__file__).resolve().parents[1]
-CORE_SHA = "1a43ecba1cd07dd231f313fcd42d4d4276e13967"
-WEB_SHA = "36515bdcb003e875108dd722febe5c969825f304"
+CORE_SHA = "b897b93726ef4d02e596e0b83c568df269e29bcc"
+WEB_SHA = "9c2b6dbeb85de019ffb86f135378e0331512a5b9"
 PG = "postgres:17-bookworm@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6ef6225b3e5d59c7afb35e994"
 MQTT = "eclipse-mosquitto:2@sha256:75d6662dee52c947dc9dd9c29f1d8d7ffef78ddaf38001caa09755681e8bbc98"
 OPENSSL = "alpine/openssl:latest@sha256:6821afa2476e11be343f29275f2ca24291720ff0a7148bd131fd8e314ff26d9e"
@@ -523,8 +523,17 @@ SOURCE50_TOOL_SHA = "c03aa044642e8e09bf61ff51c35a46079d1118f0"
 SOURCE52_TOOL_SHA = "244549d3cd6b5b2c5b7bc9757e438d2729553155"
 SOURCE54_TOOL_SHA = "2142dcd584f990031d0c02ed6b4c9f1a90d14eed"
 SOURCE56_TOOL_SHA = "f2ec065426e72fb60b3e944ca6fd852bdffde48a"
+SOURCE60_TOOL_SHA = "80770e8a3f59d0bd7fb825345f0ca7589dd26f23"
 SOURCE58_TOOL_SHA = "cfe6ce70ed8e2f3392567ec27a807343d5e866bc"
+FORMAT_2_SOURCE_MIGRATIONS = frozenset(
+    {"0016_durable_waits", "0017_metadata_cas", "0018_scene_drafts"}
+)
 SUPPORTED_UPGRADE_SOURCES = {
+    SOURCE60_TOOL_SHA: (
+        "1a43ecba1cd07dd231f313fcd42d4d4276e13967",
+        "36515bdcb003e875108dd722febe5c969825f304",
+        "0018_scene_drafts",
+    ),
     SOURCE58_TOOL_SHA: (
         "fc232035f78c99171fd72ac82c78eb1b5bb657fa",
         "31dd1029173af6c7ff4ed4e9bf0c80679c185b3b",
@@ -560,7 +569,7 @@ def source_contract(path):
     ).strip()
     if head not in SUPPORTED_UPGRADE_SOURCES:
         raise ValueError(
-            "Use an exact supported Core #42, #50, #52, #54, #56 or #58 source checkout"
+            "Use an exact supported Core #42, #50, #52, #54, #56, #58 or #60 source checkout"
         )
     return SUPPORTED_UPGRADE_SOURCES[head]
 
@@ -665,7 +674,7 @@ def validate_source_checkout(path):
     ).strip()
     if head not in SUPPORTED_UPGRADE_SOURCES or dirty:
         raise ValueError(
-            "Use an exact clean supported Core #42, #50, #52, #54, #56 or #58 source checkout"
+            "Use an exact clean supported Core #42, #50, #52, #54, #56, #58 or #60 source checkout"
         )
     return path
 
@@ -832,10 +841,7 @@ def _restore(source, destination, *, upgrading, source_version=None):
         SOURCE_MIGRATION,
     )
     expected_format = (
-        1
-        if upgrading
-        and source_version[2] not in {"0016_durable_waits", "0017_metadata_cas"}
-        else 2
+        1 if upgrading and source_version[2] not in FORMAT_2_SOURCE_MIGRATIONS else 2
     )
     if (
         manifest.get("format") != expected_format
@@ -916,13 +922,25 @@ def _restore(source, destination, *, upgrading, source_version=None):
                 != source_version[2]
             ):
                 raise ValueError("Unsupported source migration")
-            policy_baseline = migrate_upgrade(
-                profile,
-                source_migration=source_version[2],
-                expected_source=manifest.get("database")
-                if expected_format == 2
-                else None,
-            )
+            if source_version[2] == EXPECTED_MIGRATION:
+                # Same schema: no DDL, legacy defaults or dropped columns.
+                # The restore policy verifies the *complete* format-2
+                # fingerprints before applying its narrow cloned-wait change.
+                if expected_format != 2:
+                    raise ValueError(
+                        "Same-schema upgrade requires full backup fingerprints"
+                    )
+                if profile.query("SELECT count(*) FROM physical_devices") != "0":
+                    raise ValueError("Physical inventory refused")
+                policy_baseline = manifest["database"]
+            else:
+                policy_baseline = migrate_upgrade(
+                    profile,
+                    source_migration=source_version[2],
+                    expected_source=manifest.get("database")
+                    if expected_format == 2
+                    else None,
+                )
         else:
             policy_baseline = manifest["database"]
         profile.verify_database()

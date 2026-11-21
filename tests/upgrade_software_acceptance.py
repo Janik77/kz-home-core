@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -39,7 +40,18 @@ def cli(core, *args, success=True):
         capture_output=True,
         timeout=180,
     )
-    assert (result.returncode == 0) is success, "Profile CLI returned unexpected result"
+    if result.returncode != 0:
+        # Keep only the launcher's code-only diagnostic. Never expose captured
+        # exception messages, paths, output, arguments, or fixture credentials.
+        marker = re.compile(
+            rb"PROFILE_FAILURE [A-Za-z][A-Za-z0-9_]* "
+            rb"[A-Za-z0-9_.-]+:[0-9]+(?:,[A-Za-z0-9_.-]+:[0-9]+)*"
+        )
+        for line in result.stderr.splitlines():
+            if marker.fullmatch(line):
+                print(f"[profile CLI: {args[0]}] {line.decode('ascii')}", flush=True)
+    if (result.returncode == 0) is not success:
+        raise AssertionError(f"Profile CLI {args[0]} returned unexpected status")
 
 
 def digest(directory):
