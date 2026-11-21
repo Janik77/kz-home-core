@@ -13,6 +13,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - source: core60
+            core: 80770e8a3f59d0bd7fb825345f0ca7589dd26f23
+            web: 36515bdcb003e875108dd722febe5c969825f304
           - source: core58
             core: cfe6ce70ed8e2f3392567ec27a807343d5e866bc
             web: 31dd1029173af6c7ff4ed4e9bf0c80679c185b3b
@@ -80,10 +83,11 @@ jobs:
           docker pull eclipse-mosquitto:2@sha256:75d6662dee52c947dc9dd9c29f1d8d7ffef78ddaf38001caa09755681e8bbc98
           docker pull alpine/openssl:latest@sha256:6821afa2476e11be343f29275f2ca24291720ff0a7148bd131fd8e314ff26d9e
       - name: Verify private persistence and isolated restore over real HTTP and MQTT TLS
+        if: matrix.source != 'core60'
         working-directory: core
         run: '"$RUNNER_TEMP/durable-venv/bin/python" -B tests/upgrade_software_acceptance.py ../web ../core-before ../web-before'
 
-      - name: Source56/58 parked intent is invalidated only in upgraded copy
-        if: matrix.source == 'core56' || matrix.source == 'core58'
+      - name: Source56/58/60 parked intent is invalidated only in upgraded copy
+        if: matrix.source == 'core56' || matrix.source == 'core58' || matrix.source == 'core60'
         working-directory: core
         run: '"$RUNNER_TEMP/durable-venv/bin/python" -B tests/wait_profile_acceptance.py ../web ../core-before ../web-before'

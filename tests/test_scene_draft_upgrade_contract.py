@@ -12,6 +12,17 @@ from tools import durable_software as manager
 from tools.restore_policy import database_snapshot, verified_scene_draft_migration
 
 
+def test_exact_source60_uses_old_runtime_and_full_same_schema_backup():
+    assert manager.SOURCE60_TOOL_SHA == "80770e8a3f59d0bd7fb825345f0ca7589dd26f23"
+    assert manager.SUPPORTED_UPGRADE_SOURCES[manager.SOURCE60_TOOL_SHA] == (
+        "1a43ecba1cd07dd231f313fcd42d4d4276e13967",
+        "36515bdcb003e875108dd722febe5c969825f304",
+        "0018_scene_drafts",
+    )
+    assert "0018_scene_drafts" in manager.FORMAT_2_SOURCE_MIGRATIONS
+    assert "0015_house_schedules" not in manager.FORMAT_2_SOURCE_MIGRATIONS
+
+
 def test_source58_registry_and_no_metadata_or_wait_exclusions():
     assert manager.SUPPORTED_UPGRADE_SOURCES[manager.SOURCE58_TOOL_SHA] == (
         "fc232035f78c99171fd72ac82c78eb1b5bb657fa",
