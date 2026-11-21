@@ -53,6 +53,8 @@ from app.schemas import (
 from app.security import Permission, TokenCodec
 from app.api.dependencies import build_current_user_dependency
 from app.api.onboarding import build_onboarding_router
+from app.api.software_onboarding import build_software_onboarding_router
+from app.core.errors import ConflictError
 from app.api.provisioning import build_provisioning_router
 from app.api.scene_runs import build_scene_run_router
 from app.api.device_favorites import build_device_favorites_router
@@ -305,6 +307,28 @@ def build_router(
         if target != source:
             require(session, user, target, permission)
 
+    router.include_router(build_software_onboarding_router(
+        get_session, get_current_user, require, lock_metadata_scope, settings,
+        lambda session, device_id: device_service(session).get(device_id),
+    ))
+
+    lab_devices = {device for _, device, _ in settings.software_device_candidates}
+
+    def protect_lab_structure(session, kind, entity_id):
+        if not lab_devices:
+            return
+        from sqlalchemy import select
+        from app.models import DeviceORM, FloorORM, RoomORM
+        statement = select(DeviceORM.id).where(DeviceORM.id.in_(lab_devices))
+        if kind == "house":
+            statement = statement.join(RoomORM).join(FloorORM).where(FloorORM.house_id == entity_id)
+        elif kind == "floor":
+            statement = statement.join(RoomORM).where(RoomORM.floor_id == entity_id)
+        else:
+            statement = statement.where(DeviceORM.room_id == entity_id)
+        if session.scalar(statement.limit(1)) is not None:
+            raise ConflictError("Enrolled software devices cannot be removed or transferred between houses")
+
     @router.patch("/houses/{entity_id}", response_model=HouseRead)
     def update_house(
         entity_id: str,
@@ -326,6 +350,7 @@ def build_router(
         PhysicalBindingGuard(PhysicalDeviceRepository(session)).structure_mutation(
             "house", entity_id, deleting=True
         )
+        protect_lab_structure(session, "house", entity_id)
         HouseRepository(session).delete_with_memberships(entity_id)
         return Response(status_code=204)
 
@@ -375,6 +400,8 @@ def build_router(
         )
         if data.house_id is not None:
             require(session, user, data.house_id, Permission.HOUSE_MANAGE)
+        if data.house_id is not None and data.house_id != house_for(session, "floor", entity_id):
+            protect_lab_structure(session, "floor", entity_id)
         return structure(session, "floor").update(entity_id, data)
 
     @router.delete("/floors/{entity_id}", status_code=204)
@@ -389,6 +416,9 @@ def build_router(
             house_for(session, "floor", entity_id),
             Permission.HOUSE_MANAGE,
         )
+        if lab_devices:
+            lock_metadata_scope(session, user, "floor", entity_id)
+            protect_lab_structure(session, "floor", entity_id)
         structure(session, "floor").delete(entity_id)
         return Response(status_code=204)
 
@@ -448,6 +478,8 @@ def build_router(
                 house_for(session, "floor", data.floor_id),
                 Permission.HOUSE_MANAGE,
             )
+        if data.floor_id is not None and house_for(session, "floor", data.floor_id) != house_for(session, "room", entity_id):
+            protect_lab_structure(session, "room", entity_id)
         return structure(session, "room").update(entity_id, data)
 
     @router.delete("/rooms/{entity_id}", status_code=204)
@@ -462,6 +494,9 @@ def build_router(
             house_for(session, "room", entity_id),
             Permission.HOUSE_MANAGE,
         )
+        if lab_devices:
+            lock_metadata_scope(session, user, "room", entity_id)
+            protect_lab_structure(session, "room", entity_id)
         structure(session, "room").delete(entity_id)
         return Response(status_code=204)
 
@@ -478,6 +513,8 @@ def build_router(
             house_for(session, "room", data.room_id),
             Permission.DEVICE_MANAGE,
         )
+        if data.id in lab_devices:
+            raise ConflictError("Software device identity is reserved for enrollment")
         return device_service(session).create(data)
 
     @router.get("/devices", response_model=list[DeviceRead])
@@ -537,6 +574,11 @@ def build_router(
                 house_for(session, "room", data.room_id),
                 Permission.DEVICE_MANAGE,
             )
+        if entity_id in lab_devices:
+            if set(data.model_fields_set) - {"name", "room_id", "expected_metadata_revision"}:
+                raise ConflictError("Enrolled software devices allow only name and room edits")
+            if data.room_id is not None and house_for(session, "room", data.room_id) != house_for(session, "device", entity_id):
+                raise ConflictError("Enrolled software devices cannot be transferred between houses")
         return device_service(session).update(entity_id, data)
 
     @router.delete("/devices/{entity_id}", status_code=204)
@@ -551,6 +593,8 @@ def build_router(
             house_for(session, "device", entity_id),
             Permission.DEVICE_MANAGE,
         )
+        if entity_id in lab_devices:
+            raise ConflictError("Software device removal requires operator decommissioning")
         device_service(session).delete(entity_id)
         return Response(status_code=204)
 
